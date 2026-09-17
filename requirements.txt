@@ -1,0 +1,21 @@
+# --- Web / API ---
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+jinja2==3.1.5
+
+# --- Persistenz ---
+SQLAlchemy==2.0.36
+
+# --- Scheduling ---
+APScheduler==3.11.0
+pytz==2024.2
+
+# --- Datenquellen ---
+httpx==0.28.1
+yfinance>=0.2.60
+pandas>=2.2
+
+# --- Konfiguration / Robustheit ---
+PyYAML==6.0.2
+tenacity==9.0.0
+python-dotenv==1.0.1

@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% set active = 'open' %}
+{% block title %}Offene Signale · PEAD-Signal-POC{% endblock %}
+
+{% block content %}
+
+{% if notice %}
+  {% if notice == 'ok' %}
+    <div class="flash ok">Lauf abgeschlossen.</div>
+  {% elif notice == 'partial' %}
+    <div class="flash warn">Lauf abgeschlossen, aber mit Fehlern – Details unten und in <code>docker compose logs</code>.</div>
+  {% elif notice == 'busy' %}
+    <div class="flash warn">Es läuft bereits ein Durchlauf. Bitte kurz warten und neu laden.</div>
+  {% else %}
+    <div class="flash err">Lauf fehlgeschlagen – Details unten und in <code>docker compose logs</code>.</div>
+  {% endif %}
+{% endif %}
+
+<div class="callout">
+  <strong>Aussagekraft</strong>
+  Diese Umgebung beobachtet {{ ticker_count }} Titel und erzeugt damit realistisch
+  5–10 Earnings-Events pro Quartal. Das genügt, um die Pipeline technisch zu verifizieren
+  (Datenanbindung, Signalberechnung, Darstellung), <strong>nicht</strong> um die Wirksamkeit
+  der PEAD-Strategie statistisch zu beurteilen. Die Schwellenwerte
+  (SUE {{ settings.sue_threshold_buy }} / {{ settings.sue_threshold_sell }}, Fallback
+  {{ (settings.surprise_pct_fallback_buy * 100)|round(1) }} %) und die Haltedauer von
+  {{ settings.holding_period_days }} Handelstagen sind Literatur-Startwerte, keine optimierten Parameter.
+</div>
+
+{% include "_runbar.html" %}
+
+<section class="card">
+  <h2>Kennzahlen</h2>
+  <dl class="stats">
+    <div class="stat"><dt>Offene Signale</dt><dd>{{ summary.open_count }}</dd></div>
+    <div class="stat"><dt>Geschlossen</dt><dd>{{ summary.closed_count }}</dd></div>
+    <div class="stat"><dt>Erfasste Events</dt><dd>{{ summary.events_count }}</dd></div>
+    <div class="stat"><dt>Ø Rendite (real.)</dt>
+      <dd class="{{ 'pos' if (summary.avg_return_pct or 0) > 0 else ('neg' if summary.avg_return_pct else '') }}">
+        {{ summary.avg_return_pct|pct }}</dd></div>
+    <div class="stat"><dt>Trefferquote</dt><dd>{{ summary.win_rate|pct(1) }}</dd></div>
+  </dl>
+</section>
+
+<section>
+  <h2>Offene Signale</h2>
+  <div class="scroll">
+    {% if signals %}
+    <table>
+      <thead>
+        <tr>
+          <th>Symbol</th><th>Signal</th><th>Trigger</th><th>Einstieg</th>
+          <th class="num">Einstiegskurs</th><th class="num">Aktuell</th>
+          <th class="num">Unrealisiert</th><th class="num">SUE</th>
+          <th class="num">Surprise</th><th class="num">Restlaufzeit</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for s in signals %}
+        <tr>
+          <td class="sym">{{ s.symbol }}</td>
+          <td><span class="tag {{ 'buy' if s.signal_type == 'BUY' else 'sell' }}">{{ s.signal_type }}</span></td>
+          <td>{{ s.trigger_date }}</td>
+          <td>{% if s.entry_date %}{{ s.entry_date }}{% else %}<span class="muted">offen</span>{% endif %}</td>
+          <td class="num">{{ s.entry_price|num }}</td>
+          <td class="num">{{ s.current_price|num }}</td>
+          <td class="num {{ 'pos' if (s.unrealized_pct or 0) > 0 else ('neg' if s.unrealized_pct else '') }}">
+            {{ s.unrealized_pct|pct }}</td>
+          <td class="num">{{ s.sue|sue }}</td>
+          <td class="num">{{ s.surprise_pct|pct(1) }}</td>
+          <td class="num">
+            {% if s.days_remaining is not none %}
+              {{ s.days_remaining }} / {{ s.holding_period_days }} HT
+            {% else %}<span class="muted">–</span>{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <p class="empty">Keine offenen Signale. Entweder liegt noch kein Lauf vor, oder es gab
+      im Beobachtungszeitraum keine Earnings-Überraschung über der Schwelle.</p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

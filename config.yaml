@@ -1,0 +1,76 @@
+# ===========================================================================
+# PEAD-Signal-POC - Konfiguration
+# Aenderungen wirken nach:  docker compose restart
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# PLATZHALTER - hier deine 20 Symbole eintragen.
+# Finnhub/Yahoo-Schreibweise (US-Ticker, z. B. AAPL; Xetra z. B. SAP.DE).
+# Achtung: der Finnhub-Free-Tier liefert Earnings zuverlaessig nur fuer
+# US-Titel. Nicht-US-Symbole landen ohne Earnings-Event in der DB.
+# ---------------------------------------------------------------------------
+tickers:
+  - AAPL
+  - MSFT
+  - NVDA
+  - GOOGL
+  - AMZN
+  - META
+  - TSLA
+  - AVGO
+  - JPM
+  - V
+  - WMT
+  - XOM
+  - UNH
+  - JNJ
+  - PG
+  - HD
+  - COST
+  - CRM
+  - AMD
+  - NFLX
+
+# ---------------------------------------------------------------------------
+# Signal-Schwellen
+# Startwerte an der Literatur orientiert, NICHT optimiert.
+# surprise_pct wird als Bruch gefuehrt: 0.05 == +5 %.
+# ---------------------------------------------------------------------------
+sue_threshold_buy: 1.0
+sue_threshold_sell: -1.0
+surprise_pct_fallback_buy: 0.05
+surprise_pct_fallback_sell: -0.05
+
+# Mindestanzahl historischer Surprises, ab der SUE berechnet wird.
+# Darunter greift der surprise_pct-Fallback.
+min_history_for_sue: 4
+
+# ---------------------------------------------------------------------------
+# Positions- und Abruf-Parameter
+# ---------------------------------------------------------------------------
+# Haltedauer in HANDELSTAGEN (gezaehlt ueber vorhandene Kurszeilen).
+holding_period_days: 20
+
+# Wie viele Kalendertage rueckwaerts der Earnings-Kalender je Lauf abgefragt
+# wird (Puffer gegen verpasste Laeufe und Wochenenden).
+lookback_days_earnings: 3
+
+# Kurshistorie beim allerersten Lauf (Kalendertage). Muss die laengste
+# erwartete Haltedauer deutlich ueberdecken.
+price_backfill_days: 180
+
+# Kursfenster bei jedem weiteren Lauf (Kalendertage).
+price_refresh_days: 7
+
+# Pause zwischen zwei Finnhub-Requests in Sekunden (Free-Tier: 60 Calls/Min).
+finnhub_min_interval_seconds: 0.25
+
+# ---------------------------------------------------------------------------
+# Scheduler (In-Process, APScheduler)
+# ---------------------------------------------------------------------------
+schedule:
+  enabled: true
+  # Standard-Crontab-Syntax: Minute Stunde Tag Monat Wochentag
+  # 22:30 Europe/Berlin = nach US-Boersenschluss.
+  cron: "30 22 * * 1-5"
+  timezone: "Europe/Berlin"

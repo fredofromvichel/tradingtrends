@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% set active = 'history' %}
+{% block title %}Verlauf · PEAD-Signal-POC{% endblock %}
+
+{% block content %}
+<section class="card">
+  <h2>Ergebnis der geschlossenen Positionen</h2>
+  <dl class="stats">
+    <div class="stat"><dt>Geschlossen</dt><dd>{{ summary.closed_count }}</dd></div>
+    <div class="stat"><dt>Treffer</dt><dd>{{ summary.win_count }}</dd></div>
+    <div class="stat"><dt>Trefferquote</dt><dd>{{ summary.win_rate|pct(1) }}</dd></div>
+    <div class="stat"><dt>Ø Rendite</dt>
+      <dd class="{{ 'pos' if (summary.avg_return_pct or 0) > 0 else ('neg' if summary.avg_return_pct else '') }}">
+        {{ summary.avg_return_pct|pct }}</dd></div>
+    <div class="stat"><dt>Bestes</dt><dd class="pos">{{ summary.best_return_pct|pct }}</dd></div>
+    <div class="stat"><dt>Schlechtestes</dt><dd class="neg">{{ summary.worst_return_pct|pct }}</dd></div>
+  </dl>
+  <p class="runinfo" style="margin:14px 0 0">
+    Kennzahlen aus {{ summary.closed_count }} Position(en) – bei dieser Stichprobengröße
+    ohne statistische Aussagekraft. Renditen sind brutto, ohne Gebühren, Slippage und Steuern;
+    SELL-Signale werden als Short gerechnet.
+  </p>
+</section>
+
+<section>
+  <h2>Geschlossene Signale</h2>
+  <div class="scroll">
+    {% if signals %}
+    <table>
+      <thead>
+        <tr>
+          <th>Symbol</th><th>Signal</th><th>Trigger</th><th>Einstieg</th>
+          <th class="num">Einstiegskurs</th><th>Ausstieg</th><th class="num">Ausstiegskurs</th>
+          <th class="num">Haltedauer</th><th class="num">SUE</th><th class="num">Surprise</th>
+          <th class="num">Rendite</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for s in signals %}
+        <tr>
+          <td class="sym">{{ s.symbol }}</td>
+          <td><span class="tag {{ 'buy' if s.signal_type == 'BUY' else 'sell' }}">{{ s.signal_type }}</span></td>
+          <td>{{ s.trigger_date }}</td>
+          <td>{{ s.entry_date or '–' }}</td>
+          <td class="num">{{ s.entry_price|num }}</td>
+          <td>{{ s.exit_date or '–' }}</td>
+          <td class="num">{{ s.exit_price|num }}</td>
+          <td class="num">{{ s.holding_period_days }} HT</td>
+          <td class="num">{{ s.sue|sue }}</td>
+          <td class="num">{{ s.surprise_pct|pct(1) }}</td>
+          <td class="num {{ 'pos' if (s.return_pct or 0) > 0 else ('neg' if s.return_pct else '') }}">
+            {{ s.return_pct|pct }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <p class="empty">Noch keine Position geschlossen. Das passiert
+      {{ settings.holding_period_days }} Handelstage nach dem jeweiligen Einstieg.</p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

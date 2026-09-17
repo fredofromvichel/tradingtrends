@@ -1,0 +1,21 @@
+<div class="card">
+  <div class="bar">
+    <div class="runinfo">
+      {% if last_run %}
+        Letzter Lauf <strong>{{ last_run.started_at|dtfmt }}</strong> ·
+        Status <code>{{ last_run.status }}</code> ·
+        {{ last_run.events_ingested }} neue Events ·
+        {{ last_run.prices_ingested }} Kurszeilen ·
+        {{ last_run.signals_opened }} eröffnet · {{ last_run.signals_closed }} geschlossen
+      {% else %}
+        Noch kein Lauf ausgeführt – Button rechts startet den ersten.
+      {% endif %}
+    </div>
+    <form method="post" action="/run-now" onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Läuft …'">
+      <button type="submit">Jetzt aktualisieren</button>
+    </form>
+  </div>
+  {% if last_run and last_run.message %}
+    <p class="runinfo" style="margin:10px 0 0">Meldung: {{ last_run.message }}</p>
+  {% endif %}
+</div>
