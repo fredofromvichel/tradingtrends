@@ -98,6 +98,7 @@ Authentifizierung davor (Reverse-Proxy mit Basic-Auth o. ä.). Erst dann in der
 make help       # alle Kurzbefehle
 make check      # Konfiguration, Finnhub und yfinance prüfen  <- erster Schritt bei Problemen
 make run        # Pipeline-Lauf sofort ausführen
+make seed       # letzte Berichtssaison einmalig nachladen (DAYS=150)
 make logs       # Logs verfolgen
 make status     # Bestand zusammenfassen
 make up         # nach Änderung an .env  (ersetzt den Container)
@@ -110,6 +111,34 @@ make reset      # Datenbank löschen (fragt nach)
 
 Alles ohne `make` genauso möglich, z. B.
 `docker compose exec -u app app python -m app.cli check`.
+
+### Nach der Einrichtung: Seed-Lauf
+
+Im Normalbetrieb schaut die Pipeline nur `lookback_days_earnings` (Default: 3)
+Tage zurück. Außerhalb der Berichtssaison findet sie dabei korrekterweise
+**nichts** — die Startseite bleibt leer, obwohl alles funktioniert. US-Zahlen
+kommen geballt Mitte Januar, April, Juli und Oktober.
+
+Damit sich die Kette sofort prüfen lässt, statt auf die nächste Saison zu warten:
+
+```bash
+make seed              # 150 Tage zurück
+make seed DAYS=400     # über ein Jahr, mehrere Quartale
+```
+
+Der Befehl zieht das Ereignisfenster einmalig auf, holt die passende
+Kurshistorie dazu (Ereignisfenster + Haltedauer) und legt die Signale an. Da die
+Haltedauer bei alten Ereignissen längst abgelaufen ist, werden die Positionen im
+selben Lauf geschlossen — unter `/history` stehen danach Ein- und Ausstieg mit
+Rendite. Der Lauf dauert ein bis zwei Minuten (zwei Finnhub-Requests je Ticker)
+und ist beliebig wiederholbar, ohne Duplikate zu erzeugen.
+
+> **Das ist kein Backtest.** Die Signale rechnen mit den Zahlen, wie sie *heute*
+> bei Finnhub stehen. Konsensschätzungen und berichtete EPS werden nachträglich
+> revidiert, und die Kurse sind auf den heutigen Stand bereinigt — was damals
+> tatsächlich bekannt war, lässt sich daraus nicht rekonstruieren. Die Ergebnisse
+> belegen, dass die Pipeline rechnet, nicht dass die Strategie trägt. Belastbar
+> ist nur das Forward-Tracking ab jetzt.
 
 ---
 
@@ -168,10 +197,16 @@ oder von der CLI ausgelöst:
 3. **Signal-Entscheidung** — SUE hat Vorrang; ohne SUE greift die
    `surprise_pct`-Schwelle. Schwellen sind exklusiv (genau auf der Grenze → kein Signal).
 4. **Kursdaten** — yfinance, Tages-OHLCV, split- und dividendenbereinigt.
-5. **Offene Positionen prüfen** — sind `holding_period_days` Handelstage seit dem
-   Einstieg vergangen, wird geschlossen und `return_pct` berechnet.
-6. **Neue Signale anlegen** — Status `OPEN`, Einstieg am ersten **handelbaren**
-   Schlusskurs nach der Meldung. Fehlt der Kurs noch, trägt ihn der nächste Lauf nach.
+5. **Neue Signale anlegen** — Status `OPEN`, Einstieg am ersten **handelbaren**
+   Schlusskurs nach der Meldung.
+6. **Offene Positionen prüfen** — sind `holding_period_days` Handelstage seit dem
+   Einstieg vergangen, wird geschlossen und `return_pct` berechnet. Fehlt der
+   Einstiegskurs noch, wird er hier nachgetragen.
+
+Schritt 5 läuft vor Schritt 6. Im Tagesbetrieb ändert die Reihenfolge nichts —
+ein heute eröffnetes Signal kann heute nicht fällig sein. Beim Nachladen alter
+Earnings (`make seed`) ist die Haltedauer dagegen längst vorbei, und die Position
+wird so im selben Lauf geschlossen statt erst im nächsten.
 
 Die vier Schritte sind gegeneinander abgeschottet: fällt Finnhub aus, laufen
 Kursaktualisierung und Positionspflege trotzdem durch. Der Lauf wird dann als
@@ -247,7 +282,7 @@ app/
 make test
 ```
 
-33 Tests, ohne Netzzugriff:
+36 Tests, ohne Netzzugriff:
 
 * `tests/test_signals.py` — Surprise, SUE, Schwellenwerte, Short-Rendite,
   Handelstags-Arithmetik über Wochenenden, Einstiegstag je Meldezeitpunkt.
@@ -265,7 +300,8 @@ make test
 | `make check` meldet 401 | Key ungültig oder nicht übernommen. In `.env` korrigieren und `make up` (nicht `restart`), dann mit `make env` gegenprüfen. |
 | `make check` meldet `/calendar/earnings` nicht verfügbar | Endpunkt im Tarif gesperrt. Die Pipeline weicht auf die Fiskalperiode aus — das Meldedatum ist dann eine Näherung. |
 | Lauf endet `PARTIAL` | Eine Quelle ist ausgefallen, die andere lief durch. Ursache im Footer und in `make logs`. |
-| Keine Signale nach dem ersten Lauf | Normal. Es entstehen nur Signale, wenn im Rückblickfenster gemeldet **und** die Schwelle überschritten wurde. `/events` zeigt, ob Daten ankommen. |
+| Grünes Banner „Lauf abgeschlossen", aber die Seite bleibt leer | Normal, kein Fehler. Es entstehen nur Signale, wenn im Rückblickfenster von 3 Tagen gemeldet **und** die Schwelle überschritten wurde. Außerhalb der Berichtssaison passiert beides nicht. `make status` zeigt `events_count`, `/events` die Rohdaten. Mit `make seed` die letzte Saison nachholen. |
+| `make seed` findet trotzdem nichts | Fenster vergrößern (`make seed DAYS=400`); oder `/calendar/earnings` ist im Tarif gesperrt (`make check` zeigt es); oder die Ticker sind keine US-Titel. |
 | Keine Kursdaten für ein Symbol | Schreibweise gegen Yahoo Finance prüfen (Xetra z. B. `SAP.DE`). |
 | `./data/poc.db` gehört root | `APP_UID`/`APP_GID` in `.env` auf die eigene ID setzen, `make up`. |
 | Port 8000 belegt | `HOST_PORT` in `.env` ändern, `make up`. |

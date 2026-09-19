@@ -1,7 +1,7 @@
 # Bequeme Kurzbefehle. Alles laesst sich auch direkt mit `docker compose` tun.
 COMPOSE ?= docker compose
 
-.PHONY: help setup up down restart rebuild logs check run status shell test reset env
+.PHONY: help setup up down restart rebuild logs check run seed status shell test reset env
 
 help:
 	@echo "make setup    - Erstmalige Einrichtung (Docker pruefen, .env, Start)"
@@ -13,6 +13,7 @@ help:
 	@echo "make logs     - Logs verfolgen"
 	@echo "make check    - Konfiguration, Finnhub und yfinance pruefen"
 	@echo "make run      - Pipeline-Lauf sofort ausfuehren"
+	@echo "make seed     - Letzte Berichtssaison einmalig nachladen (DAYS=150)"
 	@echo "make status   - Bestand zusammenfassen"
 	@echo "make test     - Testsuite im Container ausfuehren"
 	@echo "make shell    - Shell im Container"
@@ -49,6 +50,12 @@ check:
 
 run:
 	$(COMPOSE) exec -u app app python -m app.cli run
+
+# Einmalig nach der Einrichtung: holt Earnings weit zurueck, damit sich die
+# Kette pruefen laesst, ohne auf die naechste Berichtssaison zu warten.
+DAYS ?= 150
+seed:
+	$(COMPOSE) exec -u app app python -m app.cli seed --days $(DAYS)
 
 status:
 	$(COMPOSE) exec -u app app python -m app.cli status

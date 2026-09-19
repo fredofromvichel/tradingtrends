@@ -50,6 +50,10 @@ class RunResult:
     finished_at: dt.datetime | None = None
     events_ingested: int = 0
     prices_ingested: int = 0
+    # Nur zur Anzeige, nicht persistiert: wie viele Kurszeilen die Quelle
+    # geliefert hat. Bei einem Wiederholungslauf sind fast alle davon schon
+    # bekannt, prices_ingested ist dann 0, obwohl der Abruf funktioniert hat.
+    prices_fetched: int = 0
     signals_opened: int = 0
     signals_closed: int = 0
     status: str = "RUNNING"
@@ -60,12 +64,21 @@ class RunResult:
         return " | ".join(self.errors)[:2000] if self.errors else None
 
 
-def run_daily(settings: Settings, trigger: str = "manual") -> RunResult:
+def run_daily(
+    settings: Settings,
+    trigger: str = "manual",
+    *,
+    force_price_backfill: bool = False,
+) -> RunResult:
     """Fuehrt den kompletten Tageslauf aus.
 
     Die einzelnen Schritte sind gegeneinander abgeschottet: faellt Finnhub aus,
     laufen Kursaktualisierung und Positionspflege trotzdem durch (und umgekehrt).
     Der Lauf gilt als PARTIAL, wenn mindestens ein Schritt scheiterte.
+
+    ``force_price_backfill`` holt die volle Kurshistorie statt nur des kurzen
+    Aktualisierungsfensters - noetig, wenn nachtraeglich weit zurueckliegende
+    Earnings eingelesen werden (siehe ``app.cli seed``).
     """
     if not _run_lock.acquire(blocking=False):
         raise PipelineBusy("Es laeuft bereits ein Pipeline-Durchlauf.")
@@ -83,9 +96,19 @@ def run_daily(settings: Settings, trigger: str = "manual") -> RunResult:
         log.info("Pipeline-Lauf gestartet (trigger=%s, run_id=%s)", trigger, run_id)
 
         _step(result, "Earnings-Abruf", lambda: _ingest_earnings(settings, result))
-        _step(result, "Kurs-Abruf", lambda: _ingest_prices(settings, result))
-        _step(result, "Positionspflege", lambda: _update_positions(settings, result))
+        _step(
+            result,
+            "Kurs-Abruf",
+            lambda: _ingest_prices(settings, result, force_backfill=force_price_backfill),
+        )
+        # Signale VOR der Positionspflege: im Tagesbetrieb aenderte die
+        # Reihenfolge nichts (ein heute eroeffnetes Signal kann heute nicht
+        # faellig sein), aber beim Nachladen alter Earnings wird eine laengst
+        # abgelaufene Position so im selben Lauf geschlossen statt erst im
+        # naechsten. Ausserdem traegt die Positionspflege einen fehlenden
+        # Einstiegskurs direkt nach.
         _step(result, "Signal-Erzeugung", lambda: _create_signals(settings, result))
+        _step(result, "Positionspflege", lambda: _update_positions(settings, result))
 
         result.status = "PARTIAL" if result.errors else "OK"
     except Exception as exc:  # pragma: no cover - Sicherheitsnetz
@@ -102,10 +125,12 @@ def run_daily(settings: Settings, trigger: str = "manual") -> RunResult:
         _run_lock.release()
 
     log.info(
-        "Pipeline-Lauf beendet: status=%s events=%d kurse=%d eroeffnet=%d geschlossen=%d",
+        "Pipeline-Lauf beendet: status=%s events=%d kurse=%d neu (%d abgerufen) "
+        "eroeffnet=%d geschlossen=%d",
         result.status,
         result.events_ingested,
         result.prices_ingested,
+        result.prices_fetched,
         result.signals_opened,
         result.signals_closed,
     )
@@ -116,7 +141,10 @@ def _step(result: RunResult, label: str, func) -> None:
     try:
         func()
     except Exception as exc:
-        log.exception("Schritt '%s' fehlgeschlagen", label)
+        # Eine lesbare Zeile im Normalbetrieb; der vollstaendige Stacktrace
+        # steht bei LOG_LEVEL=DEBUG zur Verfuegung.
+        log.error("Schritt '%s' fehlgeschlagen: %s", label, exc)
+        log.debug("Stacktrace zu '%s'", label, exc_info=True)
         result.errors.append(f"{label}: {exc}")
 
 
@@ -252,17 +280,21 @@ def _store_event(settings: Settings, raw: RawEarnings, history: list[RawEarnings
 # ---------------------------------------------------------------------------
 
 
-def _ingest_prices(settings: Settings, result: RunResult) -> None:
+def _ingest_prices(
+    settings: Settings, result: RunResult, *, force_backfill: bool = False
+) -> None:
     today = dt.date.today()
     with session_scope() as session:
         symbols = _active_symbols(session)
         has_prices = session.scalar(select(Price.symbol).limit(1)) is not None
 
-    window = settings.price_refresh_days if has_prices else settings.price_backfill_days
+    use_short_window = has_prices and not force_backfill
+    window = settings.price_refresh_days if use_short_window else settings.price_backfill_days
     start = today - dt.timedelta(days=window)
     log.info("Kursabruf fuer %d Symbole ab %s", len(symbols), start)
 
     rows, missing = fetch_prices(list(symbols), start, today)
+    result.prices_fetched += len(rows)
 
     written = 0
     with session_scope() as session:

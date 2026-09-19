@@ -162,7 +162,6 @@ def test_erster_lauf_legt_event_kurse_und_signal_an(
 
         signal = session.scalar(select(Signal))
         assert signal.signal_type == "BUY"
-        assert signal.status == "OPEN"
         assert signal.trigger_date == report_date
         # "amc": Einstieg erst am Folgetag, nicht am Schlusskurs des Meldetages.
         assert signal.entry_date == trading_days[trading_days.index(report_date) + 1]
@@ -170,26 +169,97 @@ def test_erster_lauf_legt_event_kurse_und_signal_an(
         assert signal.holding_period_days == 3
 
 
-def test_zweiter_lauf_schliesst_faellige_position(settings, database, patched_sources):
+def test_laengst_abgelaufene_position_schliesst_im_selben_lauf(
+    settings, database, patched_sources
+):
+    """Beim Nachladen alter Earnings ist die Haltedauer schon vorbei.
+
+    Die Signal-Erzeugung laeuft vor der Positionspflege, damit ein solches
+    Signal nicht erst beim naechsten Lauf geschlossen wird.
+    """
+    from app.pipeline import run_daily
+
+    result = run_daily(settings, trigger="seed")
+
+    assert result.signals_opened == 1
+    assert result.signals_closed == 1
+
+    with session_scope() as session:
+        signal = session.scalar(select(Signal))
+        assert signal.status == "CLOSED"
+        assert signal.exit_date is not None
+        # Kurs steigt taeglich um 1, Haltedauer 3 Handelstage.
+        assert signal.exit_price == pytest.approx(signal.entry_price + 3)
+        assert signal.return_pct == pytest.approx(3 / signal.entry_price)
+
+
+def test_frisches_signal_bleibt_offen(settings, database, monkeypatch, trading_days):
+    """Ist die Haltedauer noch nicht um, bleibt die Position OPEN."""
+    from app.pipeline import run_daily
+
+    # Meldung am vorletzten Handelstag, vor Handelsbeginn -> Einstieg am
+    # vorletzten Tag, danach nur noch ein Handelstag. Haltedauer 3.
+    recent = trading_days[-2]
+
+    class RecentFinnhub:
+        def __init__(self, *_a, **_k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_e):
+            return None
+
+        def earnings_calendar(self, symbol, date_from, date_to):
+            return [RawEarnings(symbol, recent, 1.00, 1.20, 20.0, "q", "bmo")]
+
+        def earnings_surprises(self, symbol):
+            base = recent - dt.timedelta(days=365)
+            return [
+                RawEarnings(symbol, base + dt.timedelta(days=90 * i), 1.00,
+                            1.00 + s, s * 100, "hist", None)
+                for i, s in enumerate([0.01, -0.01, 0.02, 0.00])
+            ]
+
+    def fake_fetch_prices(symbols, start, end):
+        return [
+            PriceRow(sym, d, 100.0, 101.0, 99.0, 100.0 + i, 1000)
+            for sym in symbols
+            for i, d in enumerate(trading_days)
+            if start <= d <= end
+        ], []
+
+    monkeypatch.setattr("app.pipeline.FinnhubClient", RecentFinnhub)
+    monkeypatch.setattr("app.pipeline.fetch_prices", fake_fetch_prices)
+
+    result = run_daily(settings, trigger="test")
+
+    assert result.signals_opened == 1
+    assert result.signals_closed == 0
+
+    with session_scope() as session:
+        signal = session.scalar(select(Signal))
+        assert signal.status == "OPEN"
+        assert signal.entry_date == recent
+        assert signal.exit_date is None
+        assert signal.return_pct is None
+
+
+def test_zweiter_lauf_aendert_nichts_mehr(settings, database, patched_sources):
     from app.pipeline import run_daily
 
     run_daily(settings, trigger="test")
     result = run_daily(settings, trigger="test")
 
-    # Kein doppeltes Event, kein doppeltes Signal.
+    # Kein doppeltes Event, kein doppeltes Signal, kein zweites Schliessen.
     assert result.events_ingested == 0
     assert result.signals_opened == 0
-    assert result.signals_closed == 1
+    assert result.signals_closed == 0
 
     with session_scope() as session:
         assert len(session.scalars(select(Signal)).all()) == 1
-        signal = session.scalar(select(Signal))
-        assert signal.status == "CLOSED"
-        assert signal.exit_date is not None
-        assert signal.exit_price is not None
-        # Kurs steigt taeglich um 1, Haltedauer 3 Handelstage.
-        assert signal.exit_price == pytest.approx(signal.entry_price + 3)
-        assert signal.return_pct == pytest.approx(3 / signal.entry_price)
+        assert session.scalar(select(Signal)).status == "CLOSED"
 
 
 def test_lauf_ist_idempotent(settings, database, patched_sources):
@@ -292,3 +362,52 @@ def test_ausfall_einer_quelle_stoppt_den_lauf_nicht(settings, database, monkeypa
     assert result.status == "PARTIAL"
     assert result.errors
     assert result.prices_ingested > 0
+
+
+def test_force_price_backfill_zieht_das_grosse_fenster(settings, database, monkeypatch,
+                                                       trading_days):
+    """Ohne Zwang holt ein Folgelauf nur das kurze Aktualisierungsfenster.
+
+    Beim Nachladen alter Earnings reicht das nicht - sonst fehlen die Kurse
+    rund um das Ereignis und die Position bekaeme weder Ein- noch Ausstieg.
+    """
+    from app.pipeline import run_daily
+
+    calls: list[dt.date] = []
+
+    class NoFinnhub:
+        def __init__(self, *_a, **_k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_e):
+            return None
+
+        def earnings_calendar(self, *_a, **_k):
+            return []
+
+        def earnings_surprises(self, *_a, **_k):
+            return []
+
+    def recording_fetch_prices(symbols, start, end):
+        calls.append(start)
+        return [
+            PriceRow(sym, d, 100.0, 101.0, 99.0, 100.0 + i, 1000)
+            for sym in symbols
+            for i, d in enumerate(trading_days)
+            if start <= d <= end
+        ], []
+
+    monkeypatch.setattr("app.pipeline.FinnhubClient", NoFinnhub)
+    monkeypatch.setattr("app.pipeline.fetch_prices", recording_fetch_prices)
+
+    today = dt.date.today()
+    run_daily(settings, trigger="test")                       # 1. Lauf: Backfill
+    run_daily(settings, trigger="test")                       # 2. Lauf: kurzes Fenster
+    run_daily(settings, trigger="seed", force_price_backfill=True)  # 3. Lauf: erzwungen
+
+    assert calls[0] == today - dt.timedelta(days=settings.price_backfill_days)
+    assert calls[1] == today - dt.timedelta(days=settings.price_refresh_days)
+    assert calls[2] == today - dt.timedelta(days=settings.price_backfill_days)
