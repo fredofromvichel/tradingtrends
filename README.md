@@ -100,8 +100,10 @@ make check      # Konfiguration, Finnhub und yfinance prüfen  <- erster Schritt
 make run        # Pipeline-Lauf sofort ausführen
 make logs       # Logs verfolgen
 make status     # Bestand zusammenfassen
+make up         # nach Änderung an .env  (ersetzt den Container)
 make restart    # nach Änderung an config.yaml
 make rebuild    # nach Änderung am Code
+make env        # zeigt die im Container wirklich gesetzten Werte
 make test       # Testsuite im Container
 make reset      # Datenbank löschen (fragt nach)
 ```
@@ -135,6 +137,17 @@ Alles ohne `make` genauso möglich, z. B.
 
 **`.env`** — Secrets und Host-Einstellungen: `FINNHUB_API_KEY`, `BIND_ADDR`,
 `HOST_PORT`, `LOG_LEVEL`, `RUN_ON_STARTUP`, `APP_UID`, `APP_GID`.
+
+### Änderungen übernehmen
+
+| Geändert | Befehl | Warum |
+|---|---|---|
+| `config.yaml` | `make restart` | Die Datei ist gemountet und wird beim Start neu gelesen. |
+| `.env` | `make up` | `docker compose restart` startet **denselben** Container neu — dessen Umgebungsvariablen wurden bei seiner Erstellung gesetzt und ändern sich dabei nicht. Erst `up -d` erkennt die geänderte Konfiguration und ersetzt den Container. |
+| Code unter `app/` | `make rebuild` | Der Code liegt im Image, nicht im Mount. |
+
+In allen drei Fällen bleiben die Daten erhalten — `./data/poc.db` liegt auf dem
+Host. Womit der Container tatsächlich läuft, zeigt `make env`.
 
 Beim Start validiert die Anwendung die Konfiguration und bricht mit einer
 konkreten Meldung ab, wenn etwas unstimmig ist (fehlender Key, vertauschte
@@ -249,12 +262,12 @@ make test
 | Symptom | Ursache und Abhilfe |
 |---|---|
 | Container startet nicht, Log zeigt „START ABGEBROCHEN" | `FINNHUB_API_KEY` fehlt in `.env`. |
-| `make check` meldet 401 | Key ungültig. In `.env` korrigieren, `make restart`. |
+| `make check` meldet 401 | Key ungültig oder nicht übernommen. In `.env` korrigieren und `make up` (nicht `restart`), dann mit `make env` gegenprüfen. |
 | `make check` meldet `/calendar/earnings` nicht verfügbar | Endpunkt im Tarif gesperrt. Die Pipeline weicht auf die Fiskalperiode aus — das Meldedatum ist dann eine Näherung. |
 | Lauf endet `PARTIAL` | Eine Quelle ist ausgefallen, die andere lief durch. Ursache im Footer und in `make logs`. |
 | Keine Signale nach dem ersten Lauf | Normal. Es entstehen nur Signale, wenn im Rückblickfenster gemeldet **und** die Schwelle überschritten wurde. `/events` zeigt, ob Daten ankommen. |
 | Keine Kursdaten für ein Symbol | Schreibweise gegen Yahoo Finance prüfen (Xetra z. B. `SAP.DE`). |
-| `./data/poc.db` gehört root | `APP_UID`/`APP_GID` in `.env` auf die eigene ID setzen, `make rebuild`. |
+| `./data/poc.db` gehört root | `APP_UID`/`APP_GID` in `.env` auf die eigene ID setzen, `make up`. |
 | Port 8000 belegt | `HOST_PORT` in `.env` ändern, `make up`. |
 
 Die SQLite-Datei liegt auf dem Host unter `./data/poc.db` und übersteht

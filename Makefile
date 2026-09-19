@@ -1,14 +1,15 @@
 # Bequeme Kurzbefehle. Alles laesst sich auch direkt mit `docker compose` tun.
 COMPOSE ?= docker compose
 
-.PHONY: help setup up down restart rebuild logs check run status shell test reset
+.PHONY: help setup up down restart rebuild logs check run status shell test reset env
 
 help:
 	@echo "make setup    - Erstmalige Einrichtung (Docker pruefen, .env, Start)"
-	@echo "make up       - Container starten"
+	@echo "make up       - Container starten bzw. ersetzen (nach Aenderung an .env)"
 	@echo "make down     - Container stoppen"
 	@echo "make restart  - Container neu starten (nach Aenderung an config.yaml)"
 	@echo "make rebuild  - Image neu bauen und starten (nach Code-Aenderung)"
+	@echo "make env      - Zeigt, welche Werte im laufenden Container wirklich gesetzt sind"
 	@echo "make logs     - Logs verfolgen"
 	@echo "make check    - Konfiguration, Finnhub und yfinance pruefen"
 	@echo "make run      - Pipeline-Lauf sofort ausfuehren"
@@ -20,12 +21,20 @@ help:
 setup:
 	./setup.sh
 
+# 'up' statt 'restart' nach einer .env-Aenderung: 'docker compose restart' startet
+# denselben Container neu, dessen Umgebungsvariablen bei seiner Erstellung gesetzt
+# wurden. Erst 'up -d' erkennt die geaenderte Konfiguration und ersetzt ihn.
 up:
 	$(COMPOSE) up -d
+
+env:
+	@$(COMPOSE) exec app printenv FINNHUB_API_KEY LOG_LEVEL RUN_ON_STARTUP TZ DB_PATH
 
 down:
 	$(COMPOSE) down
 
+# Nur fuer config.yaml - die Datei ist gemountet und wird beim Start neu gelesen.
+# Fuer .env siehe 'make up'.
 restart:
 	$(COMPOSE) restart
 
