@@ -80,6 +80,11 @@ Authentifizierung davor (Reverse-Proxy mit Basic-Auth o. ä.). Erst dann in der
 | `/events` | Erfasste Earnings-Events (Rohdaten-Kontrolle) |
 | `/docs` | Interaktive OpenAPI-Dokumentation |
 
+Jede Seite trägt eine aufklappbare **Legende**, die alle Begriffe für Einsteiger
+erklärt — PEAD, EPS, Surprise, SUE, Handelstage, Konfidenzintervall. Zusätzlich
+hat jede Spaltenüberschrift einen Tooltip (gepunktete Unterlinie), und das
+Mouseover auf einem Symbol zeigt Firmenname, Branche und Börse.
+
 ### JSON-API
 
 | Methode | Pfad | Beschreibung |
@@ -184,11 +189,48 @@ Schwellen, Prozentangabe statt Bruch, zu kurze Kurshistorie).
 
 ---
 
+## Kennzahlen und ihre Unsicherheit
+
+Die Startseite zeigt Trefferquote und mittlere Rendite **erst ab 20
+geschlossenen Positionen** als Zahl. Darunter steht statt eines Prozentwerts
+nur `n = 4` — und daneben das 95 %-Konfidenzintervall.
+
+Das ist Absicht und der wichtigste Punkt an der Auswertung. Bei drei Treffern
+aus vier Positionen ergibt der Dreisatz „75 % Trefferquote". Das tatsächliche
+Intervall reicht von rund 30 % bis 95 %: die Daten sind mit „die Strategie
+funktioniert hervorragend" ebenso vereinbar wie mit „sie funktioniert
+schlechter als ein Münzwurf". Ein Punktwert würde an dieser Stelle eine
+Genauigkeit behaupten, die nicht existiert — auf einem Dashboard, das
+Handelssignale zeigt, ist das kein kosmetisches Problem.
+
+| Kennzahl | Verfahren | Aussage |
+|---|---|---|
+| Trefferquote | Wilson-Intervall | Auch bei kleinem n und Anteilen nahe 0 oder 1 brauchbar, anders als die Normalapproximation. |
+| Ø Rendite | t-Intervall | Schließt das Intervall die Null aus, ist der Effekt von „kein Effekt" unterscheidbar. Andernfalls nicht — unabhängig davon, wie gut der Mittelwert aussieht. |
+| Median, Spanne | rein beschreibend | Keine Inferenz, nur was die Stichprobe enthält. |
+
+Die Grenze von 20 ist eine Konvention, keine magische Zahl (`MIN_SAMPLE` in
+`app/stats.py`). Auch bei 20 Positionen ist das Intervall noch breit — es ist
+nur nicht mehr völlig nichtssagend. Für eine belastbare Aussage über die
+PEAD-Strategie bräuchte es ein Vielfaches davon, über mehrere Berichtssaisons
+und mit vorher festgelegten Parametern.
+
+**Bewusst nicht gebaut:** eine Trendprognose oder Erfolgswahrscheinlichkeit je
+Signal. Aus dieser Datenlage wäre das eine erfundene Zahl. Was die Seite
+stattdessen zeigt, ist der faktische Verlauf jeder offenen Position — wie weit
+die Haltedauer fortgeschritten ist und wo der Kurs gerade steht.
+
+---
+
 ## Wie die Pipeline arbeitet
 
 Ein Durchlauf (`pipeline.run_daily()`), identisch ob vom Scheduler, vom Button
 oder von der CLI ausgelöst:
 
+0. **Stammdaten** — einmalig je Ticker: Firmenname, Branche und Börse über
+   Finnhub `/stock/profile2`, nur für Symbole, bei denen sie noch fehlen. Danach
+   wird der Schritt übersprungen. Schlägt er fehl, fällt die Anzeige auf das
+   Symbol zurück und der Rest des Laufs geht weiter.
 1. **Earnings abrufen** — Finnhub `/calendar/earnings` für das Rückblickfenster,
    `/stock/earnings` für die Surprise-Historie je Titel.
 2. **Events verarbeiten** — `surprise_pct = (actual − estimate) / |estimate|`.
@@ -248,6 +290,11 @@ yfinance ─────┘      FastAPI (uvicorn)
 Ein einziger Anwendungscontainer, kein separater DB-Container. SQLite läuft im
 WAL-Modus, damit das Frontend lesen kann, während ein Lauf schreibt.
 
+Beim Start werden fehlende Tabellen **und fehlende Spalten** ergänzt. Ein
+`git pull` mit neuen Feldern kostet daher nicht die bereits verfolgten Signale.
+Geänderte Typen oder neue Constraints deckt das nicht ab — dafür bleibt
+`make reset`.
+
 ```
 app/
 ├── main.py              FastAPI-App, Routen, Lifespan
@@ -255,6 +302,7 @@ app/
 ├── models.py            SQLAlchemy-Modelle
 ├── db.py                Engine, Session, Ticker-Abgleich
 ├── signals.py           Signal-Logik (netz- und DB-frei, voll getestet)
+├── stats.py             Konfidenzintervalle, Sperre kleiner Stichproben
 ├── pipeline.py          Orchestrierung des Tageslaufs
 ├── scheduler.py         APScheduler
 ├── views.py             Aufbereitung für Frontend und API
@@ -268,7 +316,7 @@ app/
 
 | Tabelle | Schlüssel | Inhalt |
 |---|---|---|
-| `tickers` | `symbol` | Beobachtete Titel, `active` statt Löschen |
+| `tickers` | `symbol` | Beobachtete Titel, `active` statt Löschen, Firmenname/Branche/Börse |
 | `earnings_events` | `id`, unique `(symbol, report_date)` | EPS, `surprise_pct`, `sue`, `report_hour`, `processed` |
 | `prices` | `(symbol, date)` | Tages-OHLCV, bereinigt |
 | `signals` | `id`, unique `earnings_event_id` | Ein- und Ausstieg, Status, `return_pct` |
@@ -282,7 +330,7 @@ app/
 make test
 ```
 
-36 Tests, ohne Netzzugriff:
+58 Tests, ohne Netzzugriff:
 
 * `tests/test_signals.py` — Surprise, SUE, Schwellenwerte, Short-Rendite,
   Handelstags-Arithmetik über Wochenenden, Einstiegstag je Meldezeitpunkt.

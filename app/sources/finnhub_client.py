@@ -43,6 +43,14 @@ class FinnhubTransientError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class CompanyProfile:
+    symbol: str
+    name: str | None
+    industry: str | None
+    exchange: str | None
+
+
+@dataclass(frozen=True)
 class RawEarnings:
     """Ein Earnings-Datensatz, quellenneutral normalisiert."""
 
@@ -160,6 +168,17 @@ class FinnhubClient:
             )
         return out
 
+    def company_profile(self, symbol: str) -> CompanyProfile:
+        """Stammdaten fuer die Anzeige - ausgeschriebener Name, Branche, Boerse."""
+        payload = self._get("/stock/profile2", {"symbol": symbol})
+        data = payload if isinstance(payload, dict) else {}
+        return CompanyProfile(
+            symbol=symbol,
+            name=_as_text(data.get("name"), 128),
+            industry=_as_text(data.get("finnhubIndustry"), 96),
+            exchange=_as_text(data.get("exchange"), 96),
+        )
+
     def earnings_surprises(self, symbol: str) -> list[RawEarnings]:
         """Die letzten gemeldeten Quartale (Finnhub liefert ueblich 4-8)."""
         payload = self._get("/stock/earnings", {"symbol": symbol})
@@ -186,6 +205,11 @@ class FinnhubClient:
             )
         out.sort(key=lambda r: r.report_date, reverse=True)
         return out
+
+
+def _as_text(value: object, limit: int) -> str | None:
+    text = str(value or "").strip()
+    return text[:limit] if text else None
 
 
 def _as_float(value: object) -> float | None:

@@ -29,7 +29,10 @@ class Ticker(Base):
     __tablename__ = "tickers"
 
     symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
+    # Ausgeschriebener Firmenname und Branche, einmalig von Finnhub geholt.
     name: Mapped[str | None] = mapped_column(String(128), default=None)
+    industry: Mapped[str | None] = mapped_column(String(96), default=None)
+    exchange: Mapped[str | None] = mapped_column(String(96), default=None)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 

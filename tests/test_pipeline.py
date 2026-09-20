@@ -16,10 +16,36 @@ import app.db as db_module
 from app.config import Schedule, Settings
 from app.db import init_engine, session_scope
 from app.models import EarningsEvent, Price, Signal
-from app.sources.finnhub_client import RawEarnings
+from app.sources.finnhub_client import CompanyProfile, RawEarnings
 from app.sources.prices import PriceRow
 
 SYMBOL = "TEST"
+
+
+class FakeFinnhubBase:
+    """Gemeinsames Geruest der Finnhub-Attrappen.
+
+    Liefert Kontextmanager-Protokoll und ein Stammdatenprofil; die Testfaelle
+    ueberschreiben nur, was sie wirklich variieren.
+    """
+
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return None
+
+    def company_profile(self, symbol):
+        return CompanyProfile(symbol, f"{symbol} Testwerte AG", "Software", "NASDAQ")
+
+    def earnings_calendar(self, symbol, date_from, date_to):
+        return []
+
+    def earnings_surprises(self, symbol):
+        return []
 
 
 def business_days(count: int, end: dt.date) -> list[dt.date]:
@@ -73,15 +99,7 @@ def report_date(trading_days: list[dt.date]) -> dt.date:
 def patched_sources(monkeypatch, trading_days, report_date):
     """Finnhub und yfinance durch deterministische Attrappen ersetzen."""
 
-    class FakeFinnhub:
-        def __init__(self, *_args, **_kwargs):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_exc):
-            return None
+    class FakeFinnhub(FakeFinnhubBase):
 
         def earnings_calendar(self, symbol, date_from, date_to):
             if report_date < date_from or report_date > date_to:
@@ -201,15 +219,7 @@ def test_frisches_signal_bleibt_offen(settings, database, monkeypatch, trading_d
     # vorletzten Tag, danach nur noch ein Handelstag. Haltedauer 3.
     recent = trading_days[-2]
 
-    class RecentFinnhub:
-        def __init__(self, *_a, **_k):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_e):
-            return None
+    class RecentFinnhub(FakeFinnhubBase):
 
         def earnings_calendar(self, symbol, date_from, date_to):
             return [RawEarnings(symbol, recent, 1.00, 1.20, 20.0, "q", "bmo")]
@@ -281,15 +291,7 @@ def test_kein_signal_unterhalb_der_schwelle(settings, database, monkeypatch, tra
     """Kleine Ueberraschung bei hoher historischer Streuung -> kein Signal."""
     from app.pipeline import run_daily
 
-    class QuietFinnhub:
-        def __init__(self, *_a, **_k):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_e):
-            return None
+    class QuietFinnhub(FakeFinnhubBase):
 
         def earnings_calendar(self, symbol, date_from, date_to):
             return [
@@ -330,15 +332,7 @@ def test_ausfall_einer_quelle_stoppt_den_lauf_nicht(settings, database, monkeypa
     """Faellt Finnhub aus, muessen Kurse trotzdem aktualisiert werden."""
     from app.pipeline import run_daily
 
-    class BrokenFinnhub:
-        def __init__(self, *_a, **_k):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_e):
-            return None
+    class BrokenFinnhub(FakeFinnhubBase):
 
         def earnings_calendar(self, *_a, **_k):
             raise RuntimeError("Finnhub nicht erreichbar")
@@ -375,15 +369,7 @@ def test_force_price_backfill_zieht_das_grosse_fenster(settings, database, monke
 
     calls: list[dt.date] = []
 
-    class NoFinnhub:
-        def __init__(self, *_a, **_k):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_e):
-            return None
+    class NoFinnhub(FakeFinnhubBase):
 
         def earnings_calendar(self, *_a, **_k):
             return []
@@ -411,3 +397,78 @@ def test_force_price_backfill_zieht_das_grosse_fenster(settings, database, monke
     assert calls[0] == today - dt.timedelta(days=settings.price_backfill_days)
     assert calls[1] == today - dt.timedelta(days=settings.price_refresh_days)
     assert calls[2] == today - dt.timedelta(days=settings.price_backfill_days)
+
+
+def test_stammdaten_werden_nur_einmal_geholt(settings, database, monkeypatch, trading_days):
+    """Ist der Firmenname bekannt, darf kein weiterer Profil-Request erfolgen."""
+    from app.pipeline import run_daily
+    from app.models import Ticker
+
+    profile_calls: list[str] = []
+
+    class CountingFinnhub(FakeFinnhubBase):
+        def company_profile(self, symbol):
+            profile_calls.append(symbol)
+            return CompanyProfile(symbol, "Testwerte AG", "Software", "NASDAQ")
+
+    def fake_fetch_prices(symbols, start, end):
+        return [
+            PriceRow(sym, d, 100.0, 101.0, 99.0, 100.0 + i, 1000)
+            for sym in symbols
+            for i, d in enumerate(trading_days)
+            if start <= d <= end
+        ], []
+
+    monkeypatch.setattr("app.pipeline.FinnhubClient", CountingFinnhub)
+    monkeypatch.setattr("app.pipeline.fetch_prices", fake_fetch_prices)
+
+    run_daily(settings, trigger="test")
+    assert profile_calls == [SYMBOL]
+
+    with session_scope() as session:
+        ticker = session.get(Ticker, SYMBOL)
+        assert ticker.name == "Testwerte AG"
+        assert ticker.industry == "Software"
+        assert ticker.exchange == "NASDAQ"
+
+    run_daily(settings, trigger="test")
+    assert profile_calls == [SYMBOL]  # kein zweiter Abruf
+
+
+def test_fehlende_stammdaten_stoppen_den_lauf_nicht(settings, database, monkeypatch,
+                                                    trading_days, report_date):
+    """Ohne Firmenprofil muss die Signalerzeugung trotzdem laufen."""
+    from app.pipeline import run_daily
+
+    class NoProfileFinnhub(FakeFinnhubBase):
+        def company_profile(self, symbol):
+            raise RuntimeError("Profil nicht verfuegbar")
+
+        def earnings_calendar(self, symbol, date_from, date_to):
+            if report_date < date_from or report_date > date_to:
+                return []
+            return [RawEarnings(symbol, report_date, 1.00, 1.20, 20.0, "q", "amc")]
+
+        def earnings_surprises(self, symbol):
+            base = report_date - dt.timedelta(days=365)
+            return [
+                RawEarnings(symbol, base + dt.timedelta(days=90 * i), 1.00,
+                            1.00 + s, s * 100, "hist", None)
+                for i, s in enumerate([0.01, -0.01, 0.02, 0.00])
+            ]
+
+    def fake_fetch_prices(symbols, start, end):
+        return [
+            PriceRow(sym, d, 100.0, 101.0, 99.0, 100.0 + i, 1000)
+            for sym in symbols
+            for i, d in enumerate(trading_days)
+            if start <= d <= end
+        ], []
+
+    monkeypatch.setattr("app.pipeline.FinnhubClient", NoProfileFinnhub)
+    monkeypatch.setattr("app.pipeline.fetch_prices", fake_fetch_prices)
+
+    result = run_daily(settings, trigger="test")
+
+    assert result.status == "PARTIAL"          # Stammdaten fehlgeschlagen
+    assert result.signals_opened == 1          # Kerngeschaeft lief trotzdem

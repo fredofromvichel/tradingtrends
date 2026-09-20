@@ -82,6 +82,11 @@ def _fmt_pct(value: float | None, digits: int = 2) -> str:
     return "–" if value is None else f"{value * 100:+.{digits}f} %"
 
 
+def _fmt_rate(value: float | None, digits: int = 0) -> str:
+    """Anteil ohne Vorzeichen - eine Trefferquote ist keine Veraenderung."""
+    return "–" if value is None else f"{value * 100:.{digits}f} %"
+
+
 def _fmt_num(value: float | None, digits: int = 2) -> str:
     return "–" if value is None else f"{value:,.{digits}f}".replace(",", " ")
 
@@ -99,6 +104,7 @@ def _fmt_dt(value: dt.datetime | None) -> str:
 
 
 templates.env.filters["pct"] = _fmt_pct
+templates.env.filters["rate"] = _fmt_rate
 templates.env.filters["num"] = _fmt_num
 templates.env.filters["sue"] = _fmt_sue
 templates.env.filters["dtfmt"] = _fmt_dt
@@ -145,6 +151,7 @@ def events(request: Request, session: Session = Depends(get_session)):
         name="events.html",
         context={
             "events": views.earnings_events(session),
+            "summary": views.summary(session),
             "last_run": views.last_run(session),
             "settings": get_settings(),
         },

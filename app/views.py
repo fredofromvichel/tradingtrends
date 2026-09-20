@@ -8,14 +8,18 @@ from dataclasses import dataclass, asdict
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import EarningsEvent, PipelineRun, Price, Signal
+from app.models import EarningsEvent, PipelineRun, Price, Signal, Ticker
 from app.signals import CLOSED, OPEN, trading_days_elapsed
+from app.stats import MIN_SAMPLE, estimate_mean, estimate_rate
 
 
 @dataclass
 class SignalView:
     id: int
     symbol: str
+    company: str | None
+    industry: str | None
+    exchange: str | None
     signal_type: str
     status: str
     trigger_date: str
@@ -32,9 +36,21 @@ class SignalView:
     surprise_pct: float | None
     return_pct: float | None
     unrealized_pct: float | None
+    # Anteil der Haltedauer, der verstrichen ist (0.0-1.0) - nur zur Anzeige.
+    progress: float | None
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+    @property
+    def tooltip(self) -> str:
+        """Text fuer das Mouseover auf dem Symbol."""
+        parts = [self.company or self.symbol]
+        if self.industry:
+            parts.append(self.industry)
+        if self.exchange:
+            parts.append(self.exchange)
+        return " · ".join(parts)
 
 
 def _latest_price(session: Session, symbol: str) -> Price | None:
@@ -54,13 +70,17 @@ def _trading_dates(session: Session, symbol: str) -> list[dt.date]:
 def _build(session: Session, signal: Signal) -> SignalView:
     latest = _latest_price(session, signal.symbol)
     current_price = latest.close if latest else None
+    ticker = session.get(Ticker, signal.symbol)
 
     days_elapsed = None
     days_remaining = None
+    progress = None
     if signal.entry_date is not None:
         dates = _trading_dates(session, signal.symbol)
         days_elapsed = trading_days_elapsed(dates, signal.entry_date)
         days_remaining = max(0, signal.holding_period_days - days_elapsed)
+        if signal.holding_period_days > 0:
+            progress = min(1.0, days_elapsed / signal.holding_period_days)
 
     unrealized = None
     if signal.status == OPEN and signal.entry_price and current_price:
@@ -70,6 +90,9 @@ def _build(session: Session, signal: Signal) -> SignalView:
     return SignalView(
         id=signal.id,
         symbol=signal.symbol,
+        company=ticker.name if ticker else None,
+        industry=ticker.industry if ticker else None,
+        exchange=ticker.exchange if ticker else None,
         signal_type=signal.signal_type,
         status=signal.status,
         trigger_date=signal.trigger_date.isoformat(),
@@ -86,6 +109,7 @@ def _build(session: Session, signal: Signal) -> SignalView:
         surprise_pct=signal.surprise_pct_at_signal,
         return_pct=signal.return_pct,
         unrealized_pct=unrealized,
+        progress=progress,
     )
 
 
@@ -130,19 +154,39 @@ def last_run(session: Session) -> PipelineRun | None:
 
 
 def summary(session: Session) -> dict:
-    """Kennzahlen der geschlossenen Positionen - bewusst nuechtern gehalten."""
+    """Kennzahlen der geschlossenen Positionen, jeweils mit Unsicherheit.
+
+    Punktschaetzer (Trefferquote, mittlere Rendite) bleiben leer, solange
+    weniger als ``MIN_SAMPLE`` Positionen geschlossen sind. Die
+    Konfidenzintervalle werden dagegen immer ausgewiesen - ihre Breite ist
+    die eigentliche Aussage bei kleiner Stichprobe.
+    """
     closed = session.scalars(
         select(Signal).where(Signal.status == CLOSED, Signal.return_pct.isnot(None))
     ).all()
     returns = [s.return_pct for s in closed if s.return_pct is not None]
     wins = sum(1 for r in returns if r > 0)
+
+    rate = estimate_rate(wins, len(returns))
+    mean = estimate_mean(returns)
+
     return {
         "closed_count": len(returns),
         "win_count": wins,
-        "win_rate": (wins / len(returns)) if returns else None,
-        "avg_return_pct": (sum(returns) / len(returns)) if returns else None,
-        "best_return_pct": max(returns) if returns else None,
-        "worst_return_pct": min(returns) if returns else None,
+        "min_sample": MIN_SAMPLE,
+        "reliable": rate.reliable,
+        "missing_for_reliable": max(0, MIN_SAMPLE - len(returns)),
+        "win_rate": rate.point,
+        "win_rate_low": rate.low,
+        "win_rate_high": rate.high,
+        "avg_return_pct": mean.mean,
+        "avg_return_low": mean.low,
+        "avg_return_high": mean.high,
+        "median_return_pct": mean.median,
+        "stdev_return_pct": mean.stdev,
+        "best_return_pct": mean.maximum,
+        "worst_return_pct": mean.minimum,
+        "effect_distinguishable": mean.excludes_zero,
         "open_count": session.scalar(
             select(func.count()).select_from(Signal).where(Signal.status == OPEN)
         )

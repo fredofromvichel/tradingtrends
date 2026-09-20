@@ -17,7 +17,7 @@
 {% endif %}
 
 <div class="callout">
-  <strong>Aussagekraft</strong>
+  <span class="label">Aussagekraft</span>
   Diese Umgebung beobachtet {{ ticker_count }} Titel und erzeugt damit realistisch
   5–10 Earnings-Events pro Quartal. Das genügt, um die Pipeline technisch zu verifizieren
   (Datenanbindung, Signalberechnung, Darstellung), <strong>nicht</strong> um die Wirksamkeit
@@ -29,18 +29,9 @@
 
 {% include "_runbar.html" %}
 
-<section class="card">
-  <h2>Kennzahlen</h2>
-  <dl class="stats">
-    <div class="stat"><dt>Offene Signale</dt><dd>{{ summary.open_count }}</dd></div>
-    <div class="stat"><dt>Geschlossen</dt><dd>{{ summary.closed_count }}</dd></div>
-    <div class="stat"><dt>Erfasste Events</dt><dd>{{ summary.events_count }}</dd></div>
-    <div class="stat"><dt>Ø Rendite (real.)</dt>
-      <dd class="{{ 'pos' if (summary.avg_return_pct or 0) > 0 else ('neg' if summary.avg_return_pct else '') }}">
-        {{ summary.avg_return_pct|pct }}</dd></div>
-    <div class="stat"><dt>Trefferquote</dt><dd>{{ summary.win_rate|pct(1) }}</dd></div>
-  </dl>
-</section>
+{% include "_legend.html" %}
+
+{% include "_stats.html" %}
 
 <section>
   <h2>Offene Signale</h2>
@@ -49,16 +40,24 @@
     <table>
       <thead>
         <tr>
-          <th>Symbol</th><th>Signal</th><th>Trigger</th><th>Einstieg</th>
-          <th class="num">Einstiegskurs</th><th class="num">Aktuell</th>
-          <th class="num">Unrealisiert</th><th class="num">SUE</th>
-          <th class="num">Surprise</th><th class="num">Restlaufzeit</th>
+          <th title="Börsenkürzel. Mouseover zeigt Firmenname, Branche und Börse."><span>Symbol</span></th>
+          <th title="Klassifikation der Pipeline, keine Anlageempfehlung. SELL wird als Leerverkauf gerechnet."><span>Signal</span></th>
+          <th title="Tag der Quartalsmeldung, der das Signal ausgelöst hat"><span>Trigger</span></th>
+          <th title="Erster nach der Meldung tatsächlich handelbarer Schlusskurs"><span>Einstieg</span></th>
+          <th class="num" title="Schlusskurs am Einstiegstag, split- und dividendenbereinigt"><span>Einstiegskurs</span></th>
+          <th class="num" title="Letzter bekannter Schlusskurs"><span>Aktuell</span></th>
+          <th class="num" title="Buchgewinn/-verlust bis jetzt. Ändert sich täglich, erst beim Ausstieg endgültig."><span>Unrealisiert</span></th>
+          <th class="num" title="Standardized Unexpected Earnings: Überraschung geteilt durch die übliche Schwankung dieses Unternehmens. „–“ = zu wenig Historie, dann zählt die reine Surprise."><span>SUE</span></th>
+          <th class="num" title="Abweichung des tatsächlichen Gewinns je Aktie von der Analystenschätzung"><span>Surprise</span></th>
+          <th class="num" title="Verstrichene und verbleibende Handelstage der Haltedauer (Börsentage, ohne Wochenenden)"><span>Verlauf</span></th>
         </tr>
       </thead>
       <tbody>
       {% for s in signals %}
         <tr>
-          <td class="sym">{{ s.symbol }}</td>
+          <td class="sym" title="{{ s.tooltip }}">{{ s.symbol }}
+            {% if s.company %}<span class="company">{{ s.company }}</span>{% endif %}
+          </td>
           <td><span class="tag {{ 'buy' if s.signal_type == 'BUY' else 'sell' }}">{{ s.signal_type }}</span></td>
           <td>{{ s.trigger_date }}</td>
           <td>{% if s.entry_date %}{{ s.entry_date }}{% else %}<span class="muted">offen</span>{% endif %}</td>
@@ -70,7 +69,13 @@
           <td class="num">{{ s.surprise_pct|pct(1) }}</td>
           <td class="num">
             {% if s.days_remaining is not none %}
-              {{ s.days_remaining }} / {{ s.holding_period_days }} HT
+              <span class="progress"
+                    title="{{ s.days_elapsed }} von {{ s.holding_period_days }} Handelstagen verstrichen, noch {{ s.days_remaining }}">
+                <span class="progress-track">
+                  <span class="progress-fill" style="width: {{ (s.progress * 100)|round(0, 'floor')|int }}%"></span>
+                </span>
+                <span class="progress-label">noch {{ s.days_remaining }} HT</span>
+              </span>
             {% else %}<span class="muted">–</span>{% endif %}
           </td>
         </tr>

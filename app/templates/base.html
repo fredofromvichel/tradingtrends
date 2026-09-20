@@ -40,8 +40,10 @@
     h2{font-size:17px;margin:0 0 12px}
     .card{background:var(--surface);border:1px solid var(--rule);border-radius:12px;padding:18px 20px}
     .callout{background:var(--warn-soft);border-radius:10px;padding:14px 16px;font-size:14px}
-    .callout strong{color:var(--warn);display:block;font-size:11px;letter-spacing:.06em;
-      text-transform:uppercase;margin-bottom:5px}
+    .callout .label{color:var(--warn);display:block;font-size:11px;letter-spacing:.06em;
+      text-transform:uppercase;font-weight:700;margin-bottom:5px}
+    /* Hervorhebung im Fliesstext bleibt Fliesstext */
+    .callout strong{font-weight:600}
     .bar{display:flex;flex-wrap:wrap;gap:14px;align-items:center;justify-content:space-between}
     .runinfo{font-size:13px;color:var(--ink-muted);font-variant-numeric:tabular-nums}
     .runinfo code{background:var(--surface-2);padding:1px 6px;border-radius:4px;font-size:12px}
@@ -49,7 +51,7 @@
       background:var(--accent);color:#fff;padding:9px 18px;border-radius:8px}
     button:hover{filter:brightness(1.08)}
     button:disabled{opacity:.6;cursor:progress}
-    .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+    .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(172px,1fr));gap:12px}
     .stat{background:var(--surface-2);border-radius:9px;padding:11px 14px}
     .stat dt{font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);margin:0}
     .stat dd{margin:3px 0 0;font-size:19px;font-variant-numeric:tabular-nums}
@@ -72,6 +74,46 @@
     .flash.warn{background:var(--warn-soft);color:var(--warn)}
     .flash.err{background:var(--sell-soft);color:var(--sell)}
     footer{border-top:1px solid var(--rule);padding:18px 0;font-size:12px;color:var(--ink-faint)}
+  
+    /* Spalten mit Erklaerung: gepunktete Unterlinie als Hinweis aufs Mouseover */
+    th[title]{cursor:help}
+    th[title] span{border-bottom:1px dotted var(--ink-faint)}
+    td.sym[title]{cursor:help}
+    td.sym{white-space:normal}
+    td.sym .company{display:block;font-weight:400;font-size:11.5px;color:var(--ink-faint);
+      max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:1px}
+
+    /* Verlaufsbalken der Haltedauer */
+    .progress{display:inline-flex;align-items:center;gap:7px}
+    .progress-track{width:54px;height:5px;border-radius:3px;background:var(--surface-2);
+      overflow:hidden;flex:none}
+    .progress-fill{display:block;height:100%;background:var(--accent);border-radius:3px}
+    .progress-label{font-size:12.5px;color:var(--ink-muted);white-space:nowrap}
+
+    /* Legende */
+    details.legend{background:var(--surface);border:1px solid var(--rule);border-radius:12px}
+    details.legend summary{cursor:pointer;padding:14px 20px;font-weight:600;font-size:15px;
+      list-style:none;display:flex;align-items:center;gap:8px}
+    details.legend summary::-webkit-details-marker{display:none}
+    details.legend summary::before{content:"\25B8";color:var(--ink-faint);font-size:12px}
+    details.legend[open] summary::before{content:"\25BE"}
+    details.legend summary:hover{color:var(--accent)}
+    .legend-body{padding:0 20px 18px}
+    .legend-body h3{font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+      color:var(--ink-faint);margin:18px 0 9px;font-weight:600}
+    .legend-body h3:first-child{margin-top:0}
+    .legend-body dl{margin:0;display:flex;flex-direction:column;gap:10px}
+    .legend-body dl > div{display:grid;grid-template-columns:170px 1fr;gap:16px;
+      font-size:14px;align-items:baseline}
+    .legend-body dt{font-weight:600;color:var(--ink)}
+    .legend-body dd{margin:0;color:var(--ink-muted)}
+    @media (max-width:620px){.legend-body dl > div{grid-template-columns:1fr;gap:2px}}
+
+    /* Kennzahl mit Konfidenzintervall darunter */
+    .stat dd{line-height:1.25}
+    .stat dd small{display:block;font-size:11.5px;color:var(--ink-faint);
+      font-weight:400;margin-top:4px;letter-spacing:0;line-height:1.35}
+    .stat dd .unreliable{font-size:15px;color:var(--warn)}
   </style>
 </head>
 <body>

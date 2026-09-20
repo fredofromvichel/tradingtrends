@@ -95,6 +95,7 @@ def run_daily(
 
         log.info("Pipeline-Lauf gestartet (trigger=%s, run_id=%s)", trigger, run_id)
 
+        _step(result, "Stammdaten", lambda: _ingest_profiles(settings))
         _step(result, "Earnings-Abruf", lambda: _ingest_earnings(settings, result))
         _step(
             result,
@@ -160,6 +161,64 @@ def _persist_run(run_id: int, result: RunResult) -> None:
         run.signals_opened = result.signals_opened
         run.signals_closed = result.signals_closed
         run.message = result.message
+
+
+# ---------------------------------------------------------------------------
+# Stammdaten: einmalig je Ticker
+# ---------------------------------------------------------------------------
+
+
+def _ingest_profiles(settings: Settings) -> None:
+    """Holt Firmenname und Branche fuer Ticker, bei denen sie noch fehlen.
+
+    Laeuft praktisch nur beim ersten Durchgang: sobald ein Name in der
+    Datenbank steht, wird das Symbol uebersprungen. Ein fehlendes Profil ist
+    kein Grund, den Lauf zu gefaehrden - die Anzeige faellt dann auf das
+    Symbol zurueck.
+    """
+    with session_scope() as session:
+        pending = list(
+            session.scalars(
+                select(Ticker.symbol).where(
+                    Ticker.active.is_(True), Ticker.name.is_(None)
+                )
+            ).all()
+        )
+    if not pending:
+        return
+
+    log.info("Stammdaten fehlen fuer %d Ticker - werden nachgeladen.", len(pending))
+    failures: list[str] = []
+    with FinnhubClient(
+        settings.finnhub_api_key,
+        min_interval_seconds=settings.finnhub_min_interval_seconds,
+    ) as client:
+        for symbol in pending:
+            try:
+                profile = client.company_profile(symbol)
+            except FinnhubAuthError as exc:
+                raise RuntimeError(str(exc)) from exc
+            except (FinnhubError, FinnhubTransientError) as exc:
+                failures.append(f"{symbol} ({exc})")
+                continue
+
+            if profile.name is None:
+                failures.append(f"{symbol} (kein Profil geliefert)")
+                continue
+
+            with session_scope() as session:
+                row = session.get(Ticker, symbol)
+                if row is not None:
+                    row.name = profile.name
+                    row.industry = profile.industry
+                    row.exchange = profile.exchange
+            log.info("Stammdaten: %s = %s (%s)", symbol, profile.name, profile.industry)
+
+    if failures:
+        raise RuntimeError(
+            f"Stammdaten fuer {len(failures)} Symbol(e) nicht abrufbar: "
+            f"{'; '.join(failures[:5])}"
+        )
 
 
 # ---------------------------------------------------------------------------

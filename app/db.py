@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from sqlalchemy import create_engine, event, select
+from sqlalchemy import create_engine, event, inspect, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -41,10 +41,48 @@ def init_engine(db_path: Path) -> Engine:
         cur.close()
 
     Base.metadata.create_all(engine)
+    _add_missing_columns(engine)
     _engine = engine
     _SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)
     log.info("SQLite bereit: %s", db_path)
     return engine
+
+
+def _add_missing_columns(engine: Engine) -> None:
+    """Ergaenzt Spalten, die in den Modellen stehen, aber in der Datei fehlen.
+
+    ``create_all`` legt fehlende Tabellen an, aber keine fehlenden Spalten. Ohne
+    das hier muesste eine bestehende poc.db nach jeder Modellerweiterung
+    geloescht werden - also samt aller bereits verfolgten Signale.
+
+    Bewusst eng gehalten: nur neue, NULL-erlaubende Spalten werden angelegt.
+    Geaenderte Typen, entfernte Spalten oder neue Constraints bleiben aussen vor
+    und brauchen weiterhin ein 'make reset'.
+    """
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+
+    for table in Base.metadata.sorted_tables:
+        if table.name not in existing_tables:
+            continue  # gerade frisch von create_all angelegt
+        present = {col["name"] for col in inspector.get_columns(table.name)}
+        for column in table.columns:
+            if column.name in present:
+                continue
+            if not column.nullable:
+                log.warning(
+                    "Spalte %s.%s fehlt, ist aber NOT NULL - automatisches "
+                    "Ergaenzen waere unsicher. Bitte 'make reset' ausfuehren.",
+                    table.name,
+                    column.name,
+                )
+                continue
+            ddl_type = column.type.compile(engine.dialect)
+            with engine.begin() as conn:
+                conn.execute(
+                    text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {ddl_type}')
+                )
+            log.info("Schema ergaenzt: %s.%s (%s)", table.name, column.name, ddl_type)
 
 
 def get_sessionmaker() -> sessionmaker[Session]:
