@@ -37,12 +37,20 @@ from app.sources.finnhub_client import (
     FinnhubAuthError,
     FinnhubClient,
     FinnhubError,
+    FinnhubForbiddenError,
     FinnhubTransientError,
     RawEarnings,
 )
+from app import coverage
 from app.sources.prices import fetch_prices
 
 log = logging.getLogger(__name__)
+
+# Endpunktpfade - muessen zu denen im Finnhub-Client passen.
+PROFILE_ENDPOINT = "/stock/profile2"
+CALENDAR_ENDPOINT = "/calendar/earnings"
+EARNINGS_ENDPOINT = "/stock/earnings"
+RECOMMENDATION_ENDPOINT = "/stock/recommendation"
 
 # Nur ein Lauf gleichzeitig - Scheduler und "Jetzt aktualisieren" teilen sich
 # den Prozess.
@@ -70,10 +78,18 @@ class RunResult:
     momentum_closed: int = 0
     status: str = "RUNNING"
     errors: list[str] = field(default_factory=list)
+    # Hinweise ohne Fehlercharakter. Ein bekannter Tarif-Ausschluss darf den
+    # Lauf nicht auf PARTIAL setzen - sonst hiesse PARTIAL dauerhaft "alles
+    # normal" und echte Fehler gingen darin unter.
+    notes: list[str] = field(default_factory=list)
 
     @property
     def message(self) -> str | None:
         return " | ".join(self.errors)[:2000] if self.errors else None
+
+    @property
+    def note(self) -> str | None:
+        return " | ".join(self.notes)[:2000] if self.notes else None
 
 
 def run_daily(
@@ -125,6 +141,11 @@ def run_daily(
         _step(result, "Positionspflege", lambda: _update_positions(settings, result))
         if settings.momentum.enabled:
             _step(result, "Momentum", lambda: _run_momentum(settings, result))
+
+        with session_scope() as session:
+            note = coverage.coverage_note(session)
+        if note:
+            result.notes.append(note)
 
         result.status = "PARTIAL" if result.errors else "OK"
     except Exception as exc:  # pragma: no cover - Sicherheitsnetz
@@ -179,7 +200,9 @@ def _persist_run(run_id: int, result: RunResult) -> None:
         run.signals_closed = result.signals_closed
         run.momentum_opened = result.momentum_opened
         run.momentum_closed = result.momentum_closed
+        run.prices_fetched = result.prices_fetched
         run.message = result.message
+        run.notes = result.note
 
 
 # ---------------------------------------------------------------------------
@@ -213,10 +236,20 @@ def _ingest_profiles(settings: Settings) -> None:
         min_interval_seconds=settings.finnhub_min_interval_seconds,
     ) as client:
         for symbol in pending:
+            with session_scope() as session:
+                if coverage.should_skip(
+                    session, symbol, PROFILE_ENDPOINT, settings.finnhub_recheck_days
+                ):
+                    continue
+
             try:
                 profile = client.company_profile(symbol)
             except FinnhubAuthError as exc:
                 raise RuntimeError(str(exc)) from exc
+            except FinnhubForbiddenError as exc:
+                with session_scope() as session:
+                    coverage.record_block(session, symbol, exc.endpoint)
+                continue
             except (FinnhubError, FinnhubTransientError) as exc:
                 failures.append(f"{symbol} ({exc})")
                 continue
@@ -226,6 +259,7 @@ def _ingest_profiles(settings: Settings) -> None:
                 continue
 
             with session_scope() as session:
+                coverage.record_success(session, symbol, PROFILE_ENDPOINT)
                 row = session.get(Ticker, symbol)
                 if row is not None:
                     row.name = profile.name
@@ -274,33 +308,56 @@ def _ingest_outlook(settings: Settings) -> None:
         return
 
     log.info("Ausblick wird fuer %d Ticker aktualisiert.", len(pending))
-    failures: list[str] = []
+    # Nach Symbol gruppiert, damit die Meldung Titel zaehlt und nicht
+    # Fehlschlaege - zwei Endpunkte je Symbol ergaeben sonst die doppelte Zahl.
+    failures: dict[str, list[str]] = {}
     with FinnhubClient(
         settings.finnhub_api_key,
         min_interval_seconds=settings.finnhub_min_interval_seconds,
     ) as client:
         for symbol in pending:
             next_date: dt.date | None = None
-            try:
-                upcoming = client.earnings_calendar(
-                    symbol, today, today + dt.timedelta(days=120)
-                )
-                future = sorted(
-                    e.report_date for e in upcoming if e.report_date >= today
-                )
-                next_date = future[0] if future else None
-            except FinnhubAuthError as exc:
-                raise RuntimeError(str(exc)) from exc
-            except (FinnhubError, FinnhubTransientError) as exc:
-                failures.append(f"{symbol}: Termin ({exc})")
 
-            try:
-                for reco in client.recommendations(symbol)[:12]:
-                    _store_recommendation(reco)
-            except FinnhubAuthError as exc:
-                raise RuntimeError(str(exc)) from exc
-            except (FinnhubError, FinnhubTransientError) as exc:
-                failures.append(f"{symbol}: Empfehlungen ({exc})")
+            with session_scope() as session:
+                skip_calendar = coverage.should_skip(
+                    session, symbol, CALENDAR_ENDPOINT, settings.finnhub_recheck_days
+                )
+            if not skip_calendar:
+                try:
+                    upcoming = client.earnings_calendar(
+                        symbol, today, today + dt.timedelta(days=120)
+                    )
+                    future = sorted(
+                        e.report_date for e in upcoming if e.report_date >= today
+                    )
+                    next_date = future[0] if future else None
+                    with session_scope() as session:
+                        coverage.record_success(session, symbol, CALENDAR_ENDPOINT)
+                except FinnhubAuthError as exc:
+                    raise RuntimeError(str(exc)) from exc
+                except FinnhubForbiddenError as exc:
+                    with session_scope() as session:
+                        coverage.record_block(session, symbol, exc.endpoint)
+                except (FinnhubError, FinnhubTransientError) as exc:
+                    failures.setdefault(symbol, []).append(f"Termin ({exc})")
+
+            with session_scope() as session:
+                skip_reco = coverage.should_skip(
+                    session, symbol, RECOMMENDATION_ENDPOINT, settings.finnhub_recheck_days
+                )
+            if not skip_reco:
+                try:
+                    for reco in client.recommendations(symbol)[:12]:
+                        _store_recommendation(reco)
+                    with session_scope() as session:
+                        coverage.record_success(session, symbol, RECOMMENDATION_ENDPOINT)
+                except FinnhubAuthError as exc:
+                    raise RuntimeError(str(exc)) from exc
+                except FinnhubForbiddenError as exc:
+                    with session_scope() as session:
+                        coverage.record_block(session, symbol, exc.endpoint)
+                except (FinnhubError, FinnhubTransientError) as exc:
+                    failures.setdefault(symbol, []).append(f"Empfehlungen ({exc})")
 
             with session_scope() as session:
                 row = session.get(Ticker, symbol)
@@ -310,9 +367,12 @@ def _ingest_outlook(settings: Settings) -> None:
                     row.outlook_fetched_at = dt.datetime.now(dt.timezone.utc)
 
     if failures:
+        details = "; ".join(
+            f"{symbol}: {', '.join(gruende)}"
+            for symbol, gruende in list(failures.items())[:4]
+        )
         raise RuntimeError(
-            f"Ausblick fuer {len(failures)} Symbol(e) unvollstaendig: "
-            f"{'; '.join(failures[:5])}"
+            f"Ausblick fuer {len(failures)} Symbol(e) unvollstaendig: {details}"
         )
 
 
@@ -352,36 +412,52 @@ def _ingest_earnings(settings: Settings, result: RunResult) -> None:
     with session_scope() as session:
         symbols = _active_symbols(session)
 
-    failures: list[str] = []
+    failures: dict[str, list[str]] = {}
     with FinnhubClient(
         settings.finnhub_api_key,
         min_interval_seconds=settings.finnhub_min_interval_seconds,
     ) as client:
         for symbol in symbols:
+            with session_scope() as session:
+                if coverage.should_skip(
+                    session, symbol, EARNINGS_ENDPOINT, settings.finnhub_recheck_days
+                ) and coverage.should_skip(
+                    session, symbol, CALENDAR_ENDPOINT, settings.finnhub_recheck_days
+                ):
+                    continue
+
+            history: list[RawEarnings] = []
             try:
                 history = client.earnings_surprises(symbol)
+                with session_scope() as session:
+                    coverage.record_success(session, symbol, EARNINGS_ENDPOINT)
             except FinnhubAuthError as exc:
                 # Betrifft jedes Symbol gleichermassen - weitere Requests
                 # waeren nur verschwendete Zeit.
                 raise RuntimeError(str(exc)) from exc
+            except FinnhubForbiddenError as exc:
+                with session_scope() as session:
+                    coverage.record_block(session, symbol, exc.endpoint)
             except (FinnhubError, FinnhubTransientError) as exc:
-                failures.append(f"{symbol}: Historie ({exc})")
-                history = []
+                failures.setdefault(symbol, []).append(f"Historie ({exc})")
 
             try:
                 events = client.earnings_calendar(symbol, date_from, date_to)
+                with session_scope() as session:
+                    coverage.record_success(session, symbol, CALENDAR_ENDPOINT)
             except FinnhubAuthError as exc:
                 raise RuntimeError(str(exc)) from exc
-            except FinnhubError as exc:
-                # Kalender im Tarif gesperrt -> Naeherung ueber die Historie.
-                log.warning("Earnings-Kalender fuer %s nicht verfuegbar: %s", symbol, exc)
+            except FinnhubForbiddenError as exc:
+                with session_scope() as session:
+                    coverage.record_block(session, symbol, exc.endpoint)
+                # Kalender gesperrt -> Naeherung ueber die Historie.
                 events = [e for e in history if date_from <= e.report_date <= date_to]
                 if events:
-                    log.warning(
+                    log.info(
                         "%s: nutze Fiskalperiode als Naeherung fuer das Meldedatum.", symbol
                     )
             except FinnhubTransientError as exc:
-                failures.append(f"{symbol}: Kalender ({exc})")
+                failures.setdefault(symbol, []).append(f"Kalender ({exc})")
                 continue
 
             for raw in events:
@@ -392,7 +468,11 @@ def _ingest_earnings(settings: Settings, result: RunResult) -> None:
                     result.events_ingested += 1
 
     if failures:
-        raise RuntimeError(f"{len(failures)} Symbol(e) fehlerhaft: {'; '.join(failures[:5])}")
+        details = "; ".join(
+            f"{symbol}: {', '.join(gruende)}"
+            for symbol, gruende in list(failures.items())[:4]
+        )
+        raise RuntimeError(f"{len(failures)} Symbol(e) fehlerhaft: {details}")
 
 
 def _store_event(settings: Settings, raw: RawEarnings, history: list[RawEarnings]) -> bool:

@@ -68,6 +68,7 @@ class Settings:
     run_on_startup: bool = False
     log_level: str = "INFO"
     outlook_max_age_days: int = 3
+    finnhub_recheck_days: int = 14
     schedule: Schedule = field(default_factory=Schedule)
     research: Research = field(default_factory=Research)
     momentum: Momentum = field(default_factory=Momentum)
@@ -162,6 +163,7 @@ def load_settings(path: Path | None = None) -> Settings:
         run_on_startup=_as_bool(os.getenv("RUN_ON_STARTUP"), False),
         log_level=(os.getenv("LOG_LEVEL") or "INFO").upper(),
         outlook_max_age_days=int(raw.get("outlook_max_age_days", 3)),
+        finnhub_recheck_days=int(raw.get("finnhub_recheck_days", 14)),
         schedule=schedule,
         research=research,
         momentum=momentum,
@@ -190,6 +192,8 @@ def _validate(s: Settings) -> None:
         raise ConfigError("research.recent_days und research.context_days muessen >= 1 sein.")
     if s.outlook_max_age_days < 1:
         raise ConfigError("outlook_max_age_days muss mindestens 1 sein.")
+    if s.finnhub_recheck_days < 1:
+        raise ConfigError("finnhub_recheck_days muss mindestens 1 sein.")
     if s.price_backfill_days < s.holding_period_days * 2:
         raise ConfigError(
             "price_backfill_days ist zu klein: die Kurshistorie muss die Haltedauer "

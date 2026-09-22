@@ -38,6 +38,19 @@ class FinnhubAuthError(FinnhubError):
     """Key fehlt oder ist ungueltig - betrifft alle Symbole, nicht nur eines."""
 
 
+class FinnhubForbiddenError(FinnhubError):
+    """Endpunkt ist fuer diesen Tarif nicht freigeschaltet (403).
+
+    Strukturell, nicht voruebergehend: ein Retry aendert nichts, und beim
+    naechsten Lauf ebenso wenig. Traegt den Endpunkt mit, damit die Pipeline
+    sich die Sperre je Symbol merken kann.
+    """
+
+    def __init__(self, message: str, endpoint: str) -> None:
+        super().__init__(message)
+        self.endpoint = endpoint
+
+
 class FinnhubTransientError(RuntimeError):
     """Vorruebergehender Fehler - Retry sinnvoll (429, 5xx, Timeout)."""
 
@@ -136,9 +149,10 @@ class FinnhubClient:
                 "Finnhub lehnt den API-Key ab (401). FINNHUB_API_KEY in der .env pruefen."
             )
         if resp.status_code == 403:
-            raise FinnhubError(
+            raise FinnhubForbiddenError(
                 f"Finnhub verweigert den Zugriff auf {path} (403) - der Endpunkt ist "
-                "fuer diesen Tarif vermutlich nicht freigeschaltet."
+                "fuer diesen Tarif nicht freigeschaltet.",
+                endpoint=path,
             )
         if resp.status_code == 429:
             raise FinnhubTransientError("Finnhub-Rate-Limit erreicht (429).")

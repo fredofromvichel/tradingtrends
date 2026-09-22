@@ -124,6 +124,28 @@ class AnalystRecommendation(Base):
     fetched_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
 
 
+class FinnhubCoverage(Base):
+    """Gemerkte Tarif-Sperren je Symbol und Endpunkt.
+
+    Ein 403 ist strukturell. Ohne dieses Gedaechtnis liefe jeder Tageslauf
+    dieselben aussichtslosen Anfragen erneut - bei einem gemischten Universum
+    schnell ein paar Dutzend pro Lauf.
+    """
+
+    __tablename__ = "finnhub_coverage"
+    __table_args__ = (
+        UniqueConstraint("symbol", "endpoint", name="uq_coverage_symbol_endpoint"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True, nullable=False)
+    endpoint: Mapped[str] = mapped_column(String(64), nullable=False)
+    blocked_since: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    # Wann zuletzt erneut probiert wurde - steuert die Wiedervorlage.
+    last_checked: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+
 class MomentumRebalance(Base):
     """Eine Umschichtung des Momentum-Korbs."""
 
@@ -192,4 +214,10 @@ class PipelineRun(Base):
     signals_closed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     momentum_opened: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     momentum_closed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Abgerufene Kurszeilen, getrennt von den neu geschriebenen: ein
+    # Wiederholungslauf schreibt 0 neue, obwohl der Abruf funktioniert hat.
+    prices_fetched: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     message: Mapped[str | None] = mapped_column(String(2000), default=None)
+    # Hinweise ohne Fehlercharakter - etwa Titel, die der Finnhub-Tarif
+    # dauerhaft nicht abdeckt. Setzen den Lauf nicht auf PARTIAL.
+    notes: Mapped[str | None] = mapped_column(String(2000), default=None)

@@ -307,6 +307,29 @@ Monats.
 > anderen unten, ohne dass das etwas mit dem Faktor zu tun hätte. Die Zahlen
 > prüfen die Mechanik; sie belegen den Faktor nicht.
 
+### Wenn Finnhub einen Titel nicht abdeckt
+
+Der Free-Tier liefert Earnings praktisch nur für US-gelistete Titel. Bei allen
+anderen antwortet Finnhub mit **403** — „Endpunkt für diesen Tarif nicht
+freigeschaltet". Das ist keine Störung, sondern eine feste Grenze, und die
+Anwendung behandelt sie entsprechend:
+
+- **Der Lauf bleibt `OK`.** Eine bekannte Tarifgrenze ist kein Fehler. Würde
+  sie den Lauf auf `PARTIAL` setzen, hieße `PARTIAL` dauerhaft „alles normal"
+  und ein echter Fehler ginge darin unter.
+- **Die Sperre wird gemerkt** — je Symbol und Endpunkt in `finnhub_coverage`.
+  Folgeläufe überspringen diese Abfragen. Bei einem gemischten Universum sind
+  das schnell ein paar Dutzend gesparte Requests pro Lauf.
+- **Alle `finnhub_recheck_days` (Default 14) wird einmal neu probiert**, damit
+  ein Tarif-Upgrade von selbst auffällt. Liefert der Endpunkt wieder Daten,
+  verschwindet die Sperre und der Titel läuft normal weiter.
+- **Ein Satz statt einer Textwand.** Der Hinweis im Seitenkopf nennt die Anzahl
+  betroffener **Titel** (nicht Fehlschläge), die Endpunkte und was trotzdem
+  funktioniert: Kurse und Momentum laufen unberührt weiter.
+
+Für diese Titel bleibt der PEAD-Status dauerhaft „Keine Aussage möglich". Wer
+das nicht will, nimmt sie aus `config.yaml` heraus.
+
 ### Voraussetzung: Kurshistorie
 
 Das Formationsfenster braucht **253 Kurstage je Titel** (252 Handelstage
@@ -507,6 +530,7 @@ app/
 
 | Tabelle | Schlüssel | Inhalt |
 |---|---|---|
+| `finnhub_coverage` | `id`, unique `(symbol, endpoint)` | Gemerkte Tarifsperren, damit aussichtslose Abfragen entfallen |
 | `tickers` | `symbol` | Beobachtete Titel, `active` statt Löschen, Firmenname/Branche/Börse, nächster Meldetermin |
 | `analyst_recommendations` | `id`, unique `(symbol, period)` | Verteilung Kaufen/Halten/Verkaufen je Monat |
 | `momentum_rebalances` | `id`, unique `period_key` | Eine Umschichtung: Formationsfenster, Universumsgröße |
@@ -524,7 +548,7 @@ app/
 make test
 ```
 
-156 Tests, ohne Netzzugriff:
+170 Tests, ohne Netzzugriff:
 
 * `tests/test_signals.py` — Surprise, SUE, Schwellenwerte, Short-Rendite,
   Handelstags-Arithmetik über Wochenenden, Einstiegstag je Meldezeitpunkt.
@@ -545,6 +569,7 @@ make test
 | Grünes Banner „Lauf abgeschlossen", aber die Seite bleibt leer | Normal, kein Fehler. Es entstehen nur Signale, wenn im Rückblickfenster von 3 Tagen gemeldet **und** die Schwelle überschritten wurde. Außerhalb der Berichtssaison passiert beides nicht. `make status` zeigt `events_count`, `/events` die Rohdaten. Mit `make seed` die letzte Saison nachholen. |
 | `/momentum` sagt „Noch keine Rangfolge möglich" | Die Kurshistorie reicht für das Formationsfenster nicht. `make backfill` lädt sie nach. Bleibt es dabei, ist `price_backfill_days` zu klein oder Yahoo liefert für die Symbole keine so lange Historie. |
 | Momentum-Korb enthält nur Verlierer | Kein Fehler, sondern die Natur eines relativen Signals: in einem fallenden Markt besteht die Spitzengruppe aus den kleinsten Verlusten. |
+| Viele 403-Meldungen beim ersten Lauf | Erwartbar bei nicht-US-Titeln: der Free-Tier deckt sie nicht ab. Ab dem zweiten Lauf werden die Abfragen übersprungen und der Hinweis auf einen Satz verdichtet. Der Lauf bleibt `OK`. |
 | Lauf endet `PARTIAL` mit Momentum-Meldung | Der Korb konnte nicht gebildet werden, meist zu kurze Historie. PEAD läuft davon unberührt weiter. |
 | Steckbrief zeigt „Keine Aussage möglich" | Kein Fehler. Außerhalb des Drift-Fensters nach einer Gewinnüberraschung hat die PEAD-Logik zu einem Titel nichts zu sagen. Der Termin der nächsten Zahlen steht auf derselben Seite. |
 | Kein Analystenbild, kein nächster Termin | `/stock/recommendation` bzw. `/calendar/earnings` sind im Tarif gesperrt oder liefern für diesen Titel nichts. `make check` zeigt den Kalender; die Seite blendet den Block dann aus. |

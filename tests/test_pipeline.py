@@ -602,3 +602,158 @@ def test_verstrichener_termin_loest_neuen_abruf_aus(settings, database, monkeypa
 
     run_daily(settings, trigger="test")
     assert len(calls) == 2
+
+
+def _forbidden(endpoint: str):
+    from app.sources.finnhub_client import FinnhubForbiddenError
+
+    return FinnhubForbiddenError(f"403 auf {endpoint}", endpoint=endpoint)
+
+
+def test_tarifsperre_setzt_den_lauf_nicht_auf_partial(settings, database, monkeypatch,
+                                                      trading_days):
+    """Ein 403 ist strukturell, kein Fehler. Sonst hieße PARTIAL dauerhaft
+    'alles normal' und echte Fehler gingen darin unter."""
+    from app.pipeline import run_daily
+
+    class ForbiddenFinnhub(FakeFinnhubBase):
+        def company_profile(self, symbol):
+            raise _forbidden("/stock/profile2")
+
+        def earnings_calendar(self, *_a, **_k):
+            raise _forbidden("/calendar/earnings")
+
+        def earnings_surprises(self, *_a, **_k):
+            raise _forbidden("/stock/earnings")
+
+        def recommendations(self, *_a, **_k):
+            raise _forbidden("/stock/recommendation")
+
+    def fake_fetch_prices(symbols, start, end):
+        return [
+            PriceRow(sym, d, 100.0, 101.0, 99.0, 100.0 + i, 1000)
+            for sym in symbols
+            for i, d in enumerate(trading_days)
+            if start <= d <= end
+        ], []
+
+    monkeypatch.setattr("app.pipeline.FinnhubClient", ForbiddenFinnhub)
+    monkeypatch.setattr("app.pipeline.fetch_prices", fake_fetch_prices)
+
+    result = run_daily(settings, trigger="test")
+
+    assert result.status == "OK", result.errors
+    assert result.errors == []
+    assert result.notes and "Finnhub-Tarif" in result.notes[0]
+    assert SYMBOL in result.notes[0]
+    # Der Kursteil läuft unberührt weiter.
+    assert result.prices_ingested > 0
+
+
+def test_gesperrte_endpunkte_werden_beim_zweiten_lauf_uebersprungen(
+    settings, database, monkeypatch, trading_days
+):
+    """Ohne Gedächtnis liefe jeder Tageslauf dieselben aussichtslosen Anfragen."""
+    from app.pipeline import run_daily
+
+    calls: list[str] = []
+
+    class CountingForbidden(FakeFinnhubBase):
+        def company_profile(self, symbol):
+            calls.append("profile")
+            raise _forbidden("/stock/profile2")
+
+        def earnings_calendar(self, *_a, **_k):
+            calls.append("calendar")
+            raise _forbidden("/calendar/earnings")
+
+        def earnings_surprises(self, *_a, **_k):
+            calls.append("earnings")
+            raise _forbidden("/stock/earnings")
+
+        def recommendations(self, *_a, **_k):
+            calls.append("reco")
+            raise _forbidden("/stock/recommendation")
+
+    def fake_fetch_prices(symbols, start, end):
+        return [], []
+
+    monkeypatch.setattr("app.pipeline.FinnhubClient", CountingForbidden)
+    monkeypatch.setattr("app.pipeline.fetch_prices", fake_fetch_prices)
+
+    run_daily(settings, trigger="test")
+    nach_erstem = len(calls)
+    assert nach_erstem > 0
+
+    run_daily(settings, trigger="test")
+    assert len(calls) == nach_erstem, f"Zweiter Lauf hat erneut angefragt: {calls[nach_erstem:]}"
+
+
+def test_freigeschalteter_endpunkt_hebt_die_sperre_auf(settings, database, monkeypatch,
+                                                       trading_days, report_date):
+    """Nach einem Tarif-Upgrade muss der Titel von selbst wieder mitlaufen."""
+    from app.coverage import blocked_symbols
+    from app.pipeline import run_daily
+
+    def fake_fetch_prices(symbols, start, end):
+        return [
+            PriceRow(sym, d, 100.0, 101.0, 99.0, 100.0 + i, 1000)
+            for sym in symbols
+            for i, d in enumerate(trading_days)
+            if start <= d <= end
+        ], []
+
+    class ForbiddenFinnhub(FakeFinnhubBase):
+        def company_profile(self, symbol):
+            raise _forbidden("/stock/profile2")
+
+        def earnings_calendar(self, *_a, **_k):
+            raise _forbidden("/calendar/earnings")
+
+        def earnings_surprises(self, *_a, **_k):
+            raise _forbidden("/stock/earnings")
+
+        def recommendations(self, *_a, **_k):
+            raise _forbidden("/stock/recommendation")
+
+    monkeypatch.setattr("app.pipeline.FinnhubClient", ForbiddenFinnhub)
+    monkeypatch.setattr("app.pipeline.fetch_prices", fake_fetch_prices)
+    run_daily(settings, trigger="test")
+
+    with session_scope() as session:
+        assert blocked_symbols(session) == [SYMBOL]
+
+    # Sperren altern lassen, damit die Wiedervorlage greift. Der
+    # Ausblick-Schritt laeuft ausserdem nur alle outlook_max_age_days - ohne
+    # dessen Zeitstempel bliebe die Empfehlungs-Sperre unberuehrt.
+    with session_scope() as session:
+        from app.models import FinnhubCoverage, Ticker
+
+        alt = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=90)
+        for row in session.scalars(select(FinnhubCoverage)).all():
+            row.last_checked = alt
+        for ticker in session.scalars(select(Ticker)).all():
+            ticker.outlook_fetched_at = alt
+
+    # Jetzt liefert Finnhub wieder.
+    class WorkingFinnhub(FakeFinnhubBase):
+        def earnings_calendar(self, symbol, date_from, date_to):
+            if date_from >= dt.date.today():
+                return []
+            return [RawEarnings(symbol, report_date, 1.00, 1.20, 20.0, "q", "amc")]
+
+        def earnings_surprises(self, symbol):
+            base = report_date - dt.timedelta(days=365)
+            return [
+                RawEarnings(symbol, base + dt.timedelta(days=90 * i), 1.00,
+                            1.00 + s, s * 100, "hist", None)
+                for i, s in enumerate([0.01, -0.01, 0.02, 0.00])
+            ]
+
+    monkeypatch.setattr("app.pipeline.FinnhubClient", WorkingFinnhub)
+    result = run_daily(settings, trigger="test")
+
+    with session_scope() as session:
+        assert blocked_symbols(session) == []
+    assert result.notes == []
+    assert result.events_ingested == 1
