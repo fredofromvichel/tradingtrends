@@ -74,6 +74,9 @@ class Settings:
     # Absender-IPs, die zugreifen duerfen. Kommt aus der Umgebung, nicht aus
     # config.yaml - es ist eine Betriebseinstellung, keine Fachlogik.
     allowed_ips: str = ""
+    # Wohin der Port auf dem Host veroeffentlicht wurde. Nur wenn das nicht
+    # Loopback ist, muss die Allowlist greifen.
+    bind_addr: str = "127.0.0.1"
     schedule: Schedule = field(default_factory=Schedule)
     research: Research = field(default_factory=Research)
     momentum: Momentum = field(default_factory=Momentum)
@@ -173,6 +176,7 @@ def load_settings(path: Path | None = None) -> Settings:
             str(raw.get("earnings_fallback_enabled", True)), True
         ),
         allowed_ips=(os.getenv("ALLOWED_IPS") or "").strip(),
+        bind_addr=(os.getenv("BIND_ADDR") or "127.0.0.1").strip(),
         schedule=schedule,
         research=research,
         momentum=momentum,

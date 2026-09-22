@@ -55,9 +55,21 @@ async def lifespan(app: FastAPI):
     with session_scope() as session:
         sync_tickers(session, settings.tickers)
 
-    networks = access.parse_allowlist(settings.allowed_ips)
-    STATE["allowed_networks"] = networks
-    log.info("Zugriff erlaubt fuer: %s", access.describe(networks))
+    if access.enforcement_needed(settings.bind_addr):
+        networks = access.parse_allowlist(settings.allowed_ips)
+        STATE["allowed_networks"] = networks
+        log.info(
+            "Port ist auf %s veroeffentlicht - Zugriff erlaubt fuer: %s",
+            settings.bind_addr,
+            access.describe(networks),
+        )
+    else:
+        # Loopback-Bindung: das Betriebssystem beschraenkt bereits.
+        STATE["allowed_networks"] = None
+        log.info(
+            "Port nur auf %s veroeffentlicht - keine zusaetzliche IP-Pruefung.",
+            settings.bind_addr,
+        )
 
     STATE["settings"] = settings
     STATE["scheduler"] = start_scheduler(settings)
@@ -91,7 +103,8 @@ async def restrict_by_ip(request: Request, call_next):
     kann sie jeder selbst setzen.
     """
     networks = STATE.get("allowed_networks")
-    if networks is None:      # vor dem Start der Lifespan, etwa im Test
+    if networks is None:
+        # Entweder Loopback-Bindung oder die Lifespan lief noch nicht.
         return await call_next(request)
 
     client_ip = request.client.host if request.client else None

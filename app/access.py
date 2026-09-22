@@ -76,6 +76,22 @@ def is_allowed(client_ip: str | None, networks: tuple[Network, ...]) -> bool:
     return any(adresse in netz for netz in networks)
 
 
+LOOPBACK_BINDS = {"127.0.0.1", "localhost", "::1", ""}
+
+
+def enforcement_needed(bind_addr: str | None) -> bool:
+    """Muss die Allowlist überhaupt greifen?
+
+    Ist der Port nur auf das Loopback-Interface des Servers veröffentlicht,
+    beschränkt bereits das Betriebssystem den Zugriff - dann darf die
+    Middleware nicht zusätzlich filtern. Sie würde sonst alles abweisen:
+    Docker übersetzt den veröffentlichten Port, und der Container sieht als
+    Absender die Gateway-Adresse des Docker-Netzes, nicht Loopback. Der
+    Zugriff über den SSH-Tunnel liefe damit ins Leere.
+    """
+    return (bind_addr or "").strip() not in LOOPBACK_BINDS
+
+
 def describe(networks: tuple[Network, ...]) -> str:
     if not networks:
         return "keine (nur localhost)"

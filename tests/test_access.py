@@ -83,3 +83,28 @@ def test_ohne_erkennbare_adresse_wird_abgelehnt():
 def test_beschreibung_fuer_die_logzeile():
     assert describe(()) == "keine (nur localhost)"
     assert "203.0.113.7/32" in describe(parse_allowlist("203.0.113.7"))
+
+
+# -- Wann die Sperre überhaupt greifen darf ---------------------------------
+
+
+def test_loopback_bindung_braucht_keine_pruefung():
+    """Sonst sperrt sich die Anwendung selbst aus: Docker übersetzt den
+    veröffentlichten Port, der Container sieht als Absender die Gateway-Adresse
+    des Docker-Netzes - nicht Loopback."""
+    from app.access import enforcement_needed
+
+    assert enforcement_needed("127.0.0.1") is False
+    assert enforcement_needed("localhost") is False
+    assert enforcement_needed("::1") is False
+    assert enforcement_needed("") is False
+    assert enforcement_needed(None) is False
+    assert enforcement_needed("  127.0.0.1  ") is False
+
+
+def test_offene_bindung_braucht_die_pruefung():
+    from app.access import enforcement_needed
+
+    assert enforcement_needed("0.0.0.0") is True
+    assert enforcement_needed("192.168.1.10") is True
+    assert enforcement_needed("::") is True
