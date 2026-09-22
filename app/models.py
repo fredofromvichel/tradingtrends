@@ -34,6 +34,9 @@ class Ticker(Base):
     industry: Mapped[str | None] = mapped_column(String(96), default=None)
     exchange: Mapped[str | None] = mapped_column(String(96), default=None)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Naechster erwarteter Meldetermin laut Finnhub-Kalender.
+    next_earnings_date: Mapped[dt.date | None] = mapped_column(Date, default=None)
+    outlook_fetched_at: Mapped[dt.datetime | None] = mapped_column(DateTime, default=None)
 
 
 class EarningsEvent(Base):
@@ -99,6 +102,26 @@ class Signal(Base):
     sue_at_signal: Mapped[float | None] = mapped_column(Float, default=None)
     surprise_pct_at_signal: Mapped[float | None] = mapped_column(Float, default=None)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+
+
+class AnalystRecommendation(Base):
+    """Analystenbild von Finnhub - Fremddaten, nicht Teil der PEAD-Logik."""
+
+    __tablename__ = "analyst_recommendations"
+    __table_args__ = (
+        UniqueConstraint("symbol", "period", name="uq_reco_symbol_period"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(ForeignKey("tickers.symbol"), index=True, nullable=False)
+    # Monatsanfang, so liefert Finnhub die Zeitreihe.
+    period: Mapped[dt.date] = mapped_column(Date, nullable=False)
+    strong_buy: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    buy: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    hold: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    sell: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    strong_sell: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    fetched_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
 
 
 class PipelineRun(Base):

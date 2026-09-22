@@ -77,6 +77,8 @@ Authentifizierung davor (Reverse-Proxy mit Basic-Auth o. ä.). Erst dann in der
 |---|---|
 | `/` | Offene Signale, Kennzahlen, Button „Jetzt aktualisieren" |
 | `/history` | Geschlossene Signale mit realisierter Rendite |
+| `/titel` | Tagesstatus aller beobachteten Titel |
+| `/titel/<SYMBOL>` | Steckbrief: PEAD-Status, Kursverlauf, Kennzahlen, Termin, Analysten, Recherche-Links |
 | `/events` | Erfasste Earnings-Events (Rohdaten-Kontrolle) |
 | `/docs` | Interaktive OpenAPI-Dokumentation |
 
@@ -91,6 +93,7 @@ Mouseover auf einem Symbol zeigt Firmenname, Branche und Börse.
 |---|---|---|
 | `GET` | `/api/signals?status=open\|closed` | Signale, ohne Parameter alle |
 | `GET` | `/api/earnings-events?limit=200` | Erfasste Earnings-Events |
+| `GET` | `/api/tickers` | Tagesstatus aller Titel |
 | `GET` | `/api/summary` | Kennzahlen |
 | `GET` | `/healthz` | Healthcheck |
 | `POST` | `/run-now` | Pipeline-Lauf, danach Redirect auf `/` |
@@ -189,6 +192,71 @@ Schwellen, Prozentangabe statt Bruch, zu kurze Kurshistorie).
 
 ---
 
+## Der Titel-Steckbrief
+
+`/titel/<SYMBOL>` beantwortet die Frage „wie steht dieser Titel gerade da?" —
+und zwar getrennt nach dem, was diese Anwendung beurteilt, und dem, was sie nur
+beschreibt oder von Dritten übernimmt.
+
+**PEAD-Status.** Das Einzige, worüber das System ein Urteil fällt. Er kennt vier
+Zustände: ein Signal läuft (mit Fortschritt der Haltedauer), die letzte Meldung
+lag innerhalb der Schwellen, das Drift-Fenster ist abgelaufen, oder es gibt noch
+keine Meldung. **„Keine Aussage" ist der Normalfall**, kein Fehler: die
+PEAD-Logik äußert sich nur in den Handelstagen nach einer Gewinnüberraschung.
+An den übrigen rund 340 Tagen im Jahr hat sie zu einem Titel nichts zu sagen,
+und die Seite sagt genau das.
+
+**Kursverlauf.** Ein Jahr Schlusskurse als Liniendiagramm, mit den
+Quartalsmeldungen als Marker: Dreieck nach oben für ein Kaufsignal, nach unten
+für ein Verkaufssignal, offener Kreis für eine Meldung ohne Signal. Die Form
+trägt die Bedeutung, nicht die Farbe — die Marker bleiben für Rotgrünblinde
+unterscheidbar. Fadenkreuz und Tooltip zeigen jeden Tageswert, `Werte als
+Tabelle` klappt dieselben Zahlen ohne Mouseover auf.
+
+**Kurskontext.** Gleitende Durchschnitte (50/200 Tage), Position in der
+52-Wochen-Spanne, annualisierte Volatilität, größter Rückgang, Volumen gegen
+den Durchschnitt, Renditen über 1 Woche bis 12 Monate. Das beschreibt, wo der
+Kurs steht — **es prognostiziert nichts** (siehe unten).
+
+**Nächste Quartalszahlen.** Der Termin aus dem Finnhub-Kalender, also wann
+überhaupt wieder mit einem Signal zu rechnen ist.
+
+**Analystenbild.** Verteilung Kaufen/Halten/Verkaufen von Finnhub. Fremddaten,
+als solche gekennzeichnet, kein Bestandteil der PEAD-Logik.
+
+### Recherche-Links
+
+Statt Schlagzeilen in die Anwendung zu holen (die dort sofort veralten), führen
+vorgefertigte Suchen nach außen — jede auf kursrelevante Treffer eingegrenzt:
+
+| Link | Was gesucht wird |
+|---|---|
+| Nachrichten der letzten Tage | Firmierung, Kurzname und Kürzel des Unternehmens |
+| Kursrelevante Ereignisse | dazu Quartalszahlen, Gewinnwarnung, Übernahme, Klage, Rückruf … |
+| Analysten und Kursziele | dazu Kursziel, hoch-/abgestuft, upgrade, downgrade |
+| Branche | die übersetzte Branchenbezeichnung (`Semiconductors` → Halbleiterbranche, Chipindustrie) |
+| Branchenereignisse | dazu Regulierung, Zölle, Exportkontrolle, Lieferkette, Subventionen |
+| SEC-Pflichtmitteilungen | 8-K-Meldungen im Original, ohne journalistische Zwischenstufe |
+
+Ein Beispiel, wie es beim Klick tatsächlich abgeschickt wird:
+
+```
+("NVIDIA Corp" OR NVIDIA OR NVDA) (Quartalszahlen OR Gewinnwarnung OR Prognose
+ OR Übernahme OR Rückruf OR Klage OR ... OR "profit warning") when:30d
+```
+
+Zwei Details, die die Trefferqualität ausmachen: die Rechtsform wird für die
+Suche abgetrennt (`Apple Inc` → auch `Apple`, weil Schlagzeilen selten die
+vollständige Firmierung nennen), und Kürzel mit weniger als drei Zeichen fliegen
+raus — `V` für Visa oder `F` für Ford würde alles treffen.
+
+Alle Begriffe stehen in `config.yaml` unter `research:` und lassen sich mit
+`make restart` anpassen: Ereigniswörter, Branchenübersetzungen, Zeitfenster,
+Sprache und Region. Zu viele ODER-Alternativen verwässern das Ergebnis, deshalb
+werden je Gruppe die ersten 14 verwendet.
+
+---
+
 ## Kennzahlen und ihre Unsicherheit
 
 Die Startseite zeigt Trefferquote und mittlere Rendite **erst ab 20
@@ -220,6 +288,29 @@ Signal. Aus dieser Datenlage wäre das eine erfundene Zahl. Was die Seite
 stattdessen zeigt, ist der faktische Verlauf jeder offenen Position — wie weit
 die Haltedauer fortgeschritten ist und wo der Kurs gerade steht.
 
+### Warum der Kurskontext keine Prognose ist
+
+Gleitende Durchschnitte, 52-Wochen-Spanne und Volatilität stehen auf der
+Detailseite als **Beschreibung**, nicht als Signal. Der Unterschied ist nicht
+kosmetisch:
+
+- **Richtung ist kaum vorhersagbar.** Klassische Chartindikatoren (Kreuzungen
+  gleitender Durchschnitte, RSI, MACD) sind seit Jahrzehnten untersucht. Was
+  im Rückblick funktioniert, überlebt den Wechsel auf unbekannte Daten meist
+  nicht — und nach Gebühren und Spread erst recht nicht.
+- **Schwankung dagegen schon.** Volatilität ist beharrlich: ruhige Phasen
+  folgen auf ruhige, turbulente auf turbulente. Deshalb steht sie hier — sie
+  sagt, wie viel Bewegung bei diesem Titel normal ist, und macht eine Rendite
+  von 3 % einordenbar.
+- **Dokumentierte Anomalien sind die Ausnahme.** PEAD ist eine davon, ebenso
+  Cross-Sectional-Momentum. Sie sind über Jahrzehnte und Märkte repliziert —
+  und genau deshalb implementiert diese Anwendung PEAD und nicht „der Kurs hat
+  den 50-Tage-Schnitt gekreuzt".
+
+Wer eine zweite Signalquelle will, sollte deshalb bei den dokumentierten
+Faktoren ansetzen und sie **getrennt** ausweisen, nicht mit PEAD zu einer Zahl
+verrühren.
+
 ---
 
 ## Wie die Pipeline arbeitet
@@ -231,6 +322,10 @@ oder von der CLI ausgelöst:
    Finnhub `/stock/profile2`, nur für Symbole, bei denen sie noch fehlen. Danach
    wird der Schritt übersprungen. Schlägt er fehl, fällt die Anzeige auf das
    Symbol zurück und der Rest des Laufs geht weiter.
+0b. **Ausblick** — nächster Meldetermin und Analystenverteilung, nur wenn der
+   letzte Abruf älter als `outlook_max_age_days` ist oder der gemerkte Termin
+   verstrichen. Beides ändert sich langsam; täglich abzufragen kostete zwei
+   zusätzliche Requests je Ticker ohne Erkenntnisgewinn.
 1. **Earnings abrufen** — Finnhub `/calendar/earnings` für das Rückblickfenster,
    `/stock/earnings` für die Surprise-Historie je Titel.
 2. **Events verarbeiten** — `surprise_pct = (actual − estimate) / |estimate|`.
@@ -303,6 +398,10 @@ app/
 ├── db.py                Engine, Session, Ticker-Abgleich
 ├── signals.py           Signal-Logik (netz- und DB-frei, voll getestet)
 ├── stats.py             Konfidenzintervalle, Sperre kleiner Stichproben
+├── indicators.py        beschreibende Kurskennzahlen (keine Prognose)
+├── charting.py          Diagrammgeometrie (reine Rechnung, kein Rendering)
+├── research.py          Recherche-Links mit eingegrenzten Suchanfragen
+├── ticker_view.py       Zusammenstellung des Titel-Steckbriefs
 ├── pipeline.py          Orchestrierung des Tageslaufs
 ├── scheduler.py         APScheduler
 ├── views.py             Aufbereitung für Frontend und API
@@ -316,7 +415,8 @@ app/
 
 | Tabelle | Schlüssel | Inhalt |
 |---|---|---|
-| `tickers` | `symbol` | Beobachtete Titel, `active` statt Löschen, Firmenname/Branche/Börse |
+| `tickers` | `symbol` | Beobachtete Titel, `active` statt Löschen, Firmenname/Branche/Börse, nächster Meldetermin |
+| `analyst_recommendations` | `id`, unique `(symbol, period)` | Verteilung Kaufen/Halten/Verkaufen je Monat |
 | `earnings_events` | `id`, unique `(symbol, report_date)` | EPS, `surprise_pct`, `sue`, `report_hour`, `processed` |
 | `prices` | `(symbol, date)` | Tages-OHLCV, bereinigt |
 | `signals` | `id`, unique `earnings_event_id` | Ein- und Ausstieg, Status, `return_pct` |
@@ -330,7 +430,7 @@ app/
 make test
 ```
 
-58 Tests, ohne Netzzugriff:
+107 Tests, ohne Netzzugriff:
 
 * `tests/test_signals.py` — Surprise, SUE, Schwellenwerte, Short-Rendite,
   Handelstags-Arithmetik über Wochenenden, Einstiegstag je Meldezeitpunkt.
@@ -349,6 +449,9 @@ make test
 | `make check` meldet `/calendar/earnings` nicht verfügbar | Endpunkt im Tarif gesperrt. Die Pipeline weicht auf die Fiskalperiode aus — das Meldedatum ist dann eine Näherung. |
 | Lauf endet `PARTIAL` | Eine Quelle ist ausgefallen, die andere lief durch. Ursache im Footer und in `make logs`. |
 | Grünes Banner „Lauf abgeschlossen", aber die Seite bleibt leer | Normal, kein Fehler. Es entstehen nur Signale, wenn im Rückblickfenster von 3 Tagen gemeldet **und** die Schwelle überschritten wurde. Außerhalb der Berichtssaison passiert beides nicht. `make status` zeigt `events_count`, `/events` die Rohdaten. Mit `make seed` die letzte Saison nachholen. |
+| Steckbrief zeigt „Keine Aussage möglich" | Kein Fehler. Außerhalb des Drift-Fensters nach einer Gewinnüberraschung hat die PEAD-Logik zu einem Titel nichts zu sagen. Der Termin der nächsten Zahlen steht auf derselben Seite. |
+| Kein Analystenbild, kein nächster Termin | `/stock/recommendation` bzw. `/calendar/earnings` sind im Tarif gesperrt oder liefern für diesen Titel nichts. `make check` zeigt den Kalender; die Seite blendet den Block dann aus. |
+| Recherche-Links treffen das Falsche | Begriffe in `config.yaml` unter `research:` anpassen, `make restart`. Häufigste Ursachen: fehlende Branchenübersetzung (die englische Bezeichnung wird dann roh gesucht) oder ein zu generischer Firmenname. |
 | `make seed` findet trotzdem nichts | Fenster vergrößern (`make seed DAYS=400`); oder `/calendar/earnings` ist im Tarif gesperrt (`make check` zeigt es); oder die Ticker sind keine US-Titel. |
 | Keine Kursdaten für ein Symbol | Schreibweise gegen Yahoo Finance prüfen (Xetra z. B. `SAP.DE`). |
 | `./data/poc.db` gehört root | `APP_UID`/`APP_GID` in `.env` auf die eigene ID setzen, `make up`. |

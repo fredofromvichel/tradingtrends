@@ -23,6 +23,21 @@ class Schedule:
 
 
 @dataclass(frozen=True)
+class Research:
+    """Begriffe und Zeitfenster der Recherche-Links."""
+
+    locale: dict[str, str] = field(
+        default_factory=lambda: {"hl": "de", "gl": "DE", "ceid": "DE:de"}
+    )
+    recent_days: int = 7
+    context_days: int = 30
+    company_event_terms: tuple[str, ...] = ()
+    sector_event_terms: tuple[str, ...] = ()
+    analyst_terms: tuple[str, ...] = ()
+    industry_terms: dict[str, list[str]] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class Settings:
     tickers: tuple[str, ...]
     finnhub_api_key: str
@@ -39,7 +54,9 @@ class Settings:
     finnhub_min_interval_seconds: float = 0.25
     run_on_startup: bool = False
     log_level: str = "INFO"
+    outlook_max_age_days: int = 3
     schedule: Schedule = field(default_factory=Schedule)
+    research: Research = field(default_factory=Research)
 
 
 def _as_bool(value: str | None, default: bool = False) -> bool:
@@ -80,6 +97,27 @@ def load_settings(path: Path | None = None) -> Settings:
         timezone=str(sched_raw.get("timezone", "Europe/Berlin")),
     )
 
+    research_raw = raw.get("research") or {}
+    if not isinstance(research_raw, dict):
+        raise ConfigError("Der Abschnitt 'research' in config.yaml ist kein Mapping.")
+    locale_raw = research_raw.get("locale") or {}
+    research = Research(
+        locale={
+            "hl": str(locale_raw.get("hl", "de")),
+            "gl": str(locale_raw.get("gl", "DE")),
+            "ceid": str(locale_raw.get("ceid", "DE:de")),
+        },
+        recent_days=int(research_raw.get("recent_days", 7)),
+        context_days=int(research_raw.get("context_days", 30)),
+        company_event_terms=tuple(research_raw.get("company_event_terms") or ()),
+        sector_event_terms=tuple(research_raw.get("sector_event_terms") or ()),
+        analyst_terms=tuple(research_raw.get("analyst_terms") or ()),
+        industry_terms={
+            str(k): [str(t) for t in (v or [])]
+            for k, v in (research_raw.get("industry_terms") or {}).items()
+        },
+    )
+
     settings = Settings(
         tickers=tuple(tickers),
         finnhub_api_key=api_key,
@@ -96,7 +134,9 @@ def load_settings(path: Path | None = None) -> Settings:
         finnhub_min_interval_seconds=float(raw.get("finnhub_min_interval_seconds", 0.25)),
         run_on_startup=_as_bool(os.getenv("RUN_ON_STARTUP"), False),
         log_level=(os.getenv("LOG_LEVEL") or "INFO").upper(),
+        outlook_max_age_days=int(raw.get("outlook_max_age_days", 3)),
         schedule=schedule,
+        research=research,
     )
     _validate(settings)
     return settings
@@ -118,6 +158,10 @@ def _validate(s: Settings) -> None:
         raise ConfigError("holding_period_days muss mindestens 1 sein.")
     if s.min_history_for_sue < 2:
         raise ConfigError("min_history_for_sue muss mindestens 2 sein (Standardabweichung).")
+    if s.research.recent_days < 1 or s.research.context_days < 1:
+        raise ConfigError("research.recent_days und research.context_days muessen >= 1 sein.")
+    if s.outlook_max_age_days < 1:
+        raise ConfigError("outlook_max_age_days muss mindestens 1 sein.")
     if s.price_backfill_days < s.holding_period_days * 2:
         raise ConfigError(
             "price_backfill_days ist zu klein: die Kurshistorie muss die Haltedauer "

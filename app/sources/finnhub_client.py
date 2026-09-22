@@ -51,6 +51,23 @@ class CompanyProfile:
 
 
 @dataclass(frozen=True)
+class Recommendation:
+    """Analystenverteilung eines Monats."""
+
+    symbol: str
+    period: dt.date
+    strong_buy: int
+    buy: int
+    hold: int
+    sell: int
+    strong_sell: int
+
+    @property
+    def total(self) -> int:
+        return self.strong_buy + self.buy + self.hold + self.sell + self.strong_sell
+
+
+@dataclass(frozen=True)
 class RawEarnings:
     """Ein Earnings-Datensatz, quellenneutral normalisiert."""
 
@@ -179,6 +196,29 @@ class FinnhubClient:
             exchange=_as_text(data.get("exchange"), 96),
         )
 
+    def recommendations(self, symbol: str) -> list[Recommendation]:
+        """Analystenbild der letzten Monate, neueste zuerst."""
+        payload = self._get("/stock/recommendation", {"symbol": symbol})
+        items = payload if isinstance(payload, list) else []
+        out: list[Recommendation] = []
+        for item in items:
+            period = _parse_date(item.get("period"))
+            if period is None:
+                continue
+            out.append(
+                Recommendation(
+                    symbol=symbol,
+                    period=period,
+                    strong_buy=_as_int(item.get("strongBuy")),
+                    buy=_as_int(item.get("buy")),
+                    hold=_as_int(item.get("hold")),
+                    sell=_as_int(item.get("sell")),
+                    strong_sell=_as_int(item.get("strongSell")),
+                )
+            )
+        out.sort(key=lambda r: r.period, reverse=True)
+        return out
+
     def earnings_surprises(self, symbol: str) -> list[RawEarnings]:
         """Die letzten gemeldeten Quartale (Finnhub liefert ueblich 4-8)."""
         payload = self._get("/stock/earnings", {"symbol": symbol})
@@ -205,6 +245,13 @@ class FinnhubClient:
             )
         out.sort(key=lambda r: r.report_date, reverse=True)
         return out
+
+
+def _as_int(value: object) -> int:
+    try:
+        return int(float(value))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
 
 
 def _as_text(value: object, limit: int) -> str | None:

@@ -41,6 +41,9 @@ class FakeFinnhubBase:
     def company_profile(self, symbol):
         return CompanyProfile(symbol, f"{symbol} Testwerte AG", "Software", "NASDAQ")
 
+    def recommendations(self, symbol):
+        return []
+
     def earnings_calendar(self, symbol, date_from, date_to):
         return []
 
@@ -472,3 +475,126 @@ def test_fehlende_stammdaten_stoppen_den_lauf_nicht(settings, database, monkeypa
 
     assert result.status == "PARTIAL"          # Stammdaten fehlgeschlagen
     assert result.signals_opened == 1          # Kerngeschaeft lief trotzdem
+
+
+def test_ausblick_speichert_termin_und_empfehlungen(settings, database, monkeypatch,
+                                                    trading_days):
+    """Nächster Meldetermin und Analystenbild landen in der Datenbank."""
+    from app.pipeline import run_daily
+    from app.models import AnalystRecommendation, Ticker
+    from app.sources.finnhub_client import Recommendation
+    from sqlalchemy import select as sa_select
+
+    naechster_termin = dt.date.today() + dt.timedelta(days=45)
+
+    class OutlookFinnhub(FakeFinnhubBase):
+        def earnings_calendar(self, symbol, date_from, date_to):
+            # Nur der Vorausblick liefert etwas, das Rückblickfenster bleibt leer.
+            # Beide Aufrufe enden in der Zukunft - allein date_from trennt sie.
+            if date_from >= dt.date.today():
+                return [RawEarnings(symbol, naechster_termin, 1.0, None, None, "q", "amc")]
+            return []
+
+        def recommendations(self, symbol):
+            heute = dt.date.today().replace(day=1)
+            return [
+                Recommendation(symbol, heute, 12, 8, 5, 1, 0),
+                Recommendation(symbol, heute - dt.timedelta(days=31), 10, 9, 6, 2, 0),
+            ]
+
+    def fake_fetch_prices(symbols, start, end):
+        return [
+            PriceRow(sym, d, 100.0, 101.0, 99.0, 100.0 + i, 1000)
+            for sym in symbols
+            for i, d in enumerate(trading_days)
+            if start <= d <= end
+        ], []
+
+    monkeypatch.setattr("app.pipeline.FinnhubClient", OutlookFinnhub)
+    monkeypatch.setattr("app.pipeline.fetch_prices", fake_fetch_prices)
+
+    result = run_daily(settings, trigger="test")
+    assert result.status == "OK", result.errors
+
+    with session_scope() as session:
+        ticker = session.get(Ticker, SYMBOL)
+        assert ticker.next_earnings_date == naechster_termin
+        assert ticker.outlook_fetched_at is not None
+
+        recos = session.scalars(sa_select(AnalystRecommendation)).all()
+        assert len(recos) == 2
+        neueste = max(recos, key=lambda r: r.period)
+        assert neueste.strong_buy == 12
+        assert neueste.hold == 5
+
+
+def test_ausblick_wird_nicht_bei_jedem_lauf_neu_geholt(settings, database, monkeypatch,
+                                                       trading_days):
+    """Termin und Empfehlungen ändern sich langsam - sonst 2 Requests je Ticker und Tag."""
+    from app.pipeline import run_daily
+
+    calls: list[str] = []
+    naechster_termin = dt.date.today() + dt.timedelta(days=45)
+
+    class CountingFinnhub(FakeFinnhubBase):
+        def earnings_calendar(self, symbol, date_from, date_to):
+            if date_from >= dt.date.today():
+                calls.append(f"kalender:{symbol}")
+                return [RawEarnings(symbol, naechster_termin, 1.0, None, None, "q", "amc")]
+            return []
+
+        def recommendations(self, symbol):
+            calls.append(f"reco:{symbol}")
+            return []
+
+    def fake_fetch_prices(symbols, start, end):
+        return [
+            PriceRow(sym, d, 100.0, 101.0, 99.0, 100.0 + i, 1000)
+            for sym in symbols
+            for i, d in enumerate(trading_days)
+            if start <= d <= end
+        ], []
+
+    monkeypatch.setattr("app.pipeline.FinnhubClient", CountingFinnhub)
+    monkeypatch.setattr("app.pipeline.fetch_prices", fake_fetch_prices)
+
+    run_daily(settings, trigger="test")
+    nach_erstem = len(calls)
+    assert nach_erstem == 2
+
+    run_daily(settings, trigger="test")
+    assert len(calls) == nach_erstem  # zweiter Lauf fragt nicht erneut
+
+
+def test_verstrichener_termin_loest_neuen_abruf_aus(settings, database, monkeypatch,
+                                                    trading_days):
+    """Liegt der gemerkte Termin in der Vergangenheit, muss neu geholt werden."""
+    from app.pipeline import run_daily
+    from app.models import Ticker
+
+    calls: list[str] = []
+
+    class CountingFinnhub(FakeFinnhubBase):
+        def earnings_calendar(self, symbol, date_from, date_to):
+            if date_from >= dt.date.today():
+                calls.append(symbol)
+            return []
+
+        def recommendations(self, symbol):
+            return []
+
+    def fake_fetch_prices(symbols, start, end):
+        return [], []
+
+    monkeypatch.setattr("app.pipeline.FinnhubClient", CountingFinnhub)
+    monkeypatch.setattr("app.pipeline.fetch_prices", fake_fetch_prices)
+
+    run_daily(settings, trigger="test")
+    assert len(calls) == 1
+
+    with session_scope() as session:
+        ticker = session.get(Ticker, SYMBOL)
+        ticker.next_earnings_date = dt.date.today() - dt.timedelta(days=1)
+
+    run_daily(settings, trigger="test")
+    assert len(calls) == 2

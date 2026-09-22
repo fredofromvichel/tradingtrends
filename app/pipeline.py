@@ -12,7 +12,14 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.db import session_scope, sync_tickers
-from app.models import EarningsEvent, PipelineRun, Price, Signal, Ticker
+from app.models import (
+    AnalystRecommendation,
+    EarningsEvent,
+    PipelineRun,
+    Price,
+    Signal,
+    Ticker,
+)
 from app.signals import (
     CLOSED,
     OPEN,
@@ -96,6 +103,7 @@ def run_daily(
         log.info("Pipeline-Lauf gestartet (trigger=%s, run_id=%s)", trigger, run_id)
 
         _step(result, "Stammdaten", lambda: _ingest_profiles(settings))
+        _step(result, "Ausblick", lambda: _ingest_outlook(settings))
         _step(result, "Earnings-Abruf", lambda: _ingest_earnings(settings, result))
         _step(
             result,
@@ -219,6 +227,103 @@ def _ingest_profiles(settings: Settings) -> None:
             f"Stammdaten fuer {len(failures)} Symbol(e) nicht abrufbar: "
             f"{'; '.join(failures[:5])}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Ausblick: naechster Meldetermin und Analystenbild
+# ---------------------------------------------------------------------------
+
+
+def _ingest_outlook(settings: Settings) -> None:
+    """Holt den naechsten Earnings-Termin und die Analystenverteilung.
+
+    Beides aendert sich langsam, deshalb nur, wenn der letzte Abruf laenger als
+    ``outlook_max_age_days`` zurueckliegt. Das haelt den taeglichen Lauf
+    schlank - sonst kaemen zwei zusaetzliche Requests je Ticker und Tag dazu.
+    """
+    today = dt.date.today()
+    cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=settings.outlook_max_age_days)
+
+    with session_scope() as session:
+        pending = [
+            symbol
+            for symbol, fetched_at, next_date in session.execute(
+                select(Ticker.symbol, Ticker.outlook_fetched_at, Ticker.next_earnings_date)
+                .where(Ticker.active.is_(True))
+                .order_by(Ticker.symbol)
+            ).all()
+            # Neu abrufen, wenn nie geholt, zu alt, oder der gemerkte Termin
+            # bereits verstrichen ist.
+            if fetched_at is None
+            or fetched_at.replace(tzinfo=dt.timezone.utc) < cutoff
+            or (next_date is not None and next_date < today)
+        ]
+
+    if not pending:
+        return
+
+    log.info("Ausblick wird fuer %d Ticker aktualisiert.", len(pending))
+    failures: list[str] = []
+    with FinnhubClient(
+        settings.finnhub_api_key,
+        min_interval_seconds=settings.finnhub_min_interval_seconds,
+    ) as client:
+        for symbol in pending:
+            next_date: dt.date | None = None
+            try:
+                upcoming = client.earnings_calendar(
+                    symbol, today, today + dt.timedelta(days=120)
+                )
+                future = sorted(
+                    e.report_date for e in upcoming if e.report_date >= today
+                )
+                next_date = future[0] if future else None
+            except FinnhubAuthError as exc:
+                raise RuntimeError(str(exc)) from exc
+            except (FinnhubError, FinnhubTransientError) as exc:
+                failures.append(f"{symbol}: Termin ({exc})")
+
+            try:
+                for reco in client.recommendations(symbol)[:12]:
+                    _store_recommendation(reco)
+            except FinnhubAuthError as exc:
+                raise RuntimeError(str(exc)) from exc
+            except (FinnhubError, FinnhubTransientError) as exc:
+                failures.append(f"{symbol}: Empfehlungen ({exc})")
+
+            with session_scope() as session:
+                row = session.get(Ticker, symbol)
+                if row is not None:
+                    if next_date is not None:
+                        row.next_earnings_date = next_date
+                    row.outlook_fetched_at = dt.datetime.now(dt.timezone.utc)
+
+    if failures:
+        raise RuntimeError(
+            f"Ausblick fuer {len(failures)} Symbol(e) unvollstaendig: "
+            f"{'; '.join(failures[:5])}"
+        )
+
+
+def _store_recommendation(reco) -> None:
+    with session_scope() as session:
+        existing = session.scalar(
+            select(AnalystRecommendation).where(
+                AnalystRecommendation.symbol == reco.symbol,
+                AnalystRecommendation.period == reco.period,
+            )
+        )
+        target = existing or AnalystRecommendation(
+            symbol=reco.symbol, period=reco.period
+        )
+        target.strong_buy = reco.strong_buy
+        target.buy = reco.buy
+        target.hold = reco.hold
+        target.sell = reco.sell
+        target.strong_sell = reco.strong_sell
+        target.fetched_at = dt.datetime.now(dt.timezone.utc)
+        if existing is None:
+            session.add(target)
 
 
 # ---------------------------------------------------------------------------

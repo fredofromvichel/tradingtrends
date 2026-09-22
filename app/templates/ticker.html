@@ -1,0 +1,239 @@
+{% extends "base.html" %}
+{% set active = 'tickers' %}
+{% block title %}{{ d.symbol }} · PEAD-Signal-POC{% endblock %}
+
+{% block content %}
+
+<nav class="breadcrumb"><a href="/titel">Alle Titel</a> <span>›</span> {{ d.symbol }}</nav>
+
+<header class="card ticker-head">
+  <div>
+    <h1 class="ticker-symbol">{{ d.symbol }}</h1>
+    <p class="ticker-name">
+      {{ d.company or 'Firmenname noch nicht abgerufen' }}
+      {%- if d.industry %} · {{ d.industry }}{% endif %}
+    </p>
+  </div>
+  <div class="ticker-price">
+    <span class="ticker-close">{{ d.context.last_close|num }}</span>
+    <span class="runinfo">Schlusskurs {{ d.context.last_date|datefmt }}</span>
+  </div>
+</header>
+
+{# Das Einzige, worüber diese Anwendung ein Urteil fällt. #}
+<section class="card pead-status pead-{{ d.pead.state|lower }}">
+  <p class="label">PEAD-Status</p>
+  <h2>{{ d.pead.headline }}</h2>
+  <p>{{ d.pead.detail }}</p>
+  {% if d.pead.state != 'ACTIVE' %}
+    <p class="runinfo" style="margin-top:10px">
+      Die PEAD-Logik trifft nur in den {{ settings.holding_period_days }} Handelstagen
+      nach einer Gewinnüberraschung eine Aussage. Außerhalb dieses Fensters ist
+      „keine Aussage“ das korrekte Ergebnis, kein Fehler.
+    </p>
+  {% endif %}
+</section>
+
+{% include "_chart.html" %}
+
+<section class="card">
+  <h2>Kurskontext</h2>
+  <p class="runinfo" style="margin:-4px 0 14px">
+    Beschreibt, wo der Kurs steht und wie stark er schwankt. <strong>Keine Prognose</strong> –
+    die Vorhersagekraft solcher Kennzahlen auf Tagesbasis ist schwach.
+  </p>
+  <dl class="stats">
+    <div class="stat">
+      <dt title="Abstand zum Durchschnitt der letzten 50 Handelstage">50-Tage-Schnitt</dt>
+      <dd>{{ d.context.sma50|num }}
+        {% if d.context.distance_to(d.context.sma50) is not none %}
+          <small>{{ d.context.distance_to(d.context.sma50)|pct(1) }} Abstand</small>
+        {% endif %}</dd>
+    </div>
+    <div class="stat">
+      <dt title="Abstand zum Durchschnitt der letzten 200 Handelstage – der übliche Langfristmaßstab">200-Tage-Schnitt</dt>
+      <dd>{{ d.context.sma200|num }}
+        {% if d.context.distance_to(d.context.sma200) is not none %}
+          <small>{{ d.context.distance_to(d.context.sma200)|pct(1) }} Abstand</small>
+        {% endif %}</dd>
+    </div>
+    <div class="stat">
+      <dt title="Wo der Kurs zwischen 52-Wochen-Tief und -Hoch steht">52-Wochen-Spanne</dt>
+      <dd>
+        {% if d.context.range_position is not none %}
+          {{ d.context.range_position|rate }}
+          <span class="meter"><span class="meter-fill"
+            style="width: {{ (d.context.range_position * 100)|round(0,'floor')|int }}%"></span></span>
+          <small>{{ d.context.low_52w|num }} bis {{ d.context.high_52w|num }}</small>
+        {% else %}–{% endif %}
+      </dd>
+    </div>
+    <div class="stat">
+      <dt title="Annualisierte Standardabweichung der Tagesrenditen der letzten 60 Handelstage">Volatilität</dt>
+      <dd>{{ d.context.volatility_annualised|rate(0) }}<small>annualisiert, 60 Tage</small></dd>
+    </div>
+    <div class="stat">
+      <dt title="Größter Rückgang vom Hoch innerhalb der letzten 52 Wochen">Max. Rückgang</dt>
+      <dd class="neg">{{ d.context.max_drawdown_52w|pct(1) }}<small>52 Wochen</small></dd>
+    </div>
+    <div class="stat">
+      <dt title="Handelsvolumen des letzten Tages gegen den 20-Tage-Durchschnitt">Volumen</dt>
+      <dd>{% if d.context.volume_ratio %}{{ (d.context.volume_ratio)|round(2) }}×{% else %}–{% endif %}
+        <small>gegen 20-Tage-Schnitt</small></dd>
+    </div>
+  </dl>
+
+  <dl class="stats" style="margin-top:12px">
+    {% for label, value, hint in [
+      ('1 Woche', d.context.return_1w, '5 Handelstage'),
+      ('1 Monat', d.context.return_1m, '21 Handelstage'),
+      ('3 Monate', d.context.return_3m, '63 Handelstage'),
+      ('12 Monate', d.context.return_12m, '252 Handelstage')] %}
+      <div class="stat">
+        <dt>{{ label }}</dt>
+        <dd class="{{ 'pos' if (value or 0) > 0 else ('neg' if value else '') }}">
+          {{ value|pct(1) }}<small>{{ hint }}</small></dd>
+      </div>
+    {% endfor %}
+  </dl>
+</section>
+
+<section class="card">
+  <h2>Nächste Quartalszahlen</h2>
+  {% if d.next_earnings_date %}
+    <p>
+      <strong>{{ d.next_earnings_date|datefmt }}</strong>
+      {% if d.days_to_earnings is not none %}
+        {% if d.days_to_earnings > 0 %}— in {{ d.days_to_earnings }} Tagen
+        {% elif d.days_to_earnings == 0 %}— heute
+        {% else %}— erwartet, Meldung steht noch aus{% endif %}
+      {% endif %}
+    </p>
+    <p class="runinfo">Vorher ist kein neues PEAD-Signal zu erwarten. Termine laut
+      Finnhub-Kalender und bis zur Bestätigung durch das Unternehmen vorläufig.</p>
+  {% else %}
+    <p class="muted">Kein Termin bekannt. Finnhub liefert den Kalender nicht für jeden
+      Titel und jeden Tarif; <code>make check</code> zeigt, ob der Endpunkt verfügbar ist.</p>
+  {% endif %}
+</section>
+
+{% if d.analysts and d.analysts.total %}
+<section class="card">
+  <h2>Analystenbild</h2>
+  <p class="runinfo" style="margin:-4px 0 12px">
+    Fremddaten von Finnhub, Stand {{ d.analysts.period|datefmt }}.
+    <strong>Nicht Teil der PEAD-Logik</strong> – rein informativ.
+  </p>
+  <div class="reco-bar" role="img"
+       aria-label="{{ d.analysts.total }} Analysten: {{ d.analysts.strong_buy + d.analysts.buy }} Kaufen, {{ d.analysts.hold }} Halten, {{ d.analysts.sell + d.analysts.strong_sell }} Verkaufen">
+    {% set t = d.analysts.total %}
+    {% if d.analysts.strong_buy + d.analysts.buy %}
+      <span class="seg seg-buy" style="width: {{ ((d.analysts.strong_buy + d.analysts.buy) / t * 100)|round(1) }}%"></span>
+    {% endif %}
+    {% if d.analysts.hold %}
+      <span class="seg seg-hold" style="width: {{ (d.analysts.hold / t * 100)|round(1) }}%"></span>
+    {% endif %}
+    {% if d.analysts.sell + d.analysts.strong_sell %}
+      <span class="seg seg-sell" style="width: {{ ((d.analysts.sell + d.analysts.strong_sell) / t * 100)|round(1) }}%"></span>
+    {% endif %}
+  </div>
+  <ul class="chart-legend">
+    <li><span class="key seg-buy"></span>Kaufen {{ d.analysts.strong_buy + d.analysts.buy }}</li>
+    <li><span class="key seg-hold"></span>Halten {{ d.analysts.hold }}</li>
+    <li><span class="key seg-sell"></span>Verkaufen {{ d.analysts.sell + d.analysts.strong_sell }}</li>
+    <li class="muted">von {{ d.analysts.total }} Analysten</li>
+  </ul>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Recherche</h2>
+  <p class="runinfo" style="margin:-4px 0 14px">
+    Vorgefertigte Suchen, eingegrenzt auf kursrelevante Treffer. Die Begriffe stehen
+    in <code>config.yaml</code> unter <code>research:</code> und lassen sich anpassen.
+  </p>
+  {% for group in ['Unternehmen', 'Branche', 'Primärquellen'] %}
+    {% set items = d.research | selectattr('group', 'equalto', group) | list %}
+    {% if items %}
+      <h3 class="research-group">{{ group }}</h3>
+      <ul class="research-list">
+        {% for link in items %}
+          <li>
+            <a href="{{ link.url }}" target="_blank" rel="noopener noreferrer">{{ link.label }}</a>
+            <span>{{ link.description }}</span>
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  {% endfor %}
+</section>
+
+<section>
+  <h2>Signale dieses Titels</h2>
+  <div class="scroll">
+    {% set rows = d.open_signals + d.closed_signals %}
+    {% if rows %}
+    <table>
+      <thead>
+        <tr>
+          <th><span>Signal</span></th><th><span>Trigger</span></th><th><span>Einstieg</span></th>
+          <th class="num"><span>Einstiegskurs</span></th><th><span>Ausstieg</span></th>
+          <th class="num"><span>SUE</span></th><th class="num"><span>Surprise</span></th>
+          <th class="num"><span>Ergebnis</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in rows %}
+        <tr>
+          <td><span class="tag {{ 'buy' if s.signal_type == 'BUY' else 'sell' }}">{{ s.signal_type }}</span></td>
+          <td>{{ s.trigger_date }}</td>
+          <td>{{ s.entry_date or '–' }}</td>
+          <td class="num">{{ s.entry_price|num }}</td>
+          <td>{{ s.exit_date or 'offen' }}</td>
+          <td class="num">{{ s.sue|sue }}</td>
+          <td class="num">{{ s.surprise_pct|pct(1) }}</td>
+          <td class="num {{ 'pos' if (s.return_pct or s.unrealized_pct or 0) > 0 else ('neg' if (s.return_pct or s.unrealized_pct) else '') }}">
+            {% if s.return_pct is not none %}{{ s.return_pct|pct }}
+            {% elif s.unrealized_pct is not none %}{{ s.unrealized_pct|pct }} <span class="muted">offen</span>
+            {% else %}–{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <p class="empty">Für diesen Titel wurde noch kein Signal erzeugt.</p>
+    {% endif %}
+  </div>
+</section>
+
+<section>
+  <h2>Quartalsmeldungen</h2>
+  <div class="scroll">
+    {% if d.events %}
+    <table>
+      <thead>
+        <tr><th><span>Meldedatum</span></th><th><span>Zeitpunkt</span></th>
+          <th class="num"><span>EPS erwartet</span></th><th class="num"><span>EPS tatsächlich</span></th>
+          <th class="num"><span>Surprise</span></th><th class="num"><span>SUE</span></th></tr>
+      </thead>
+      <tbody>
+        {% for e in d.events %}
+        <tr>
+          <td>{{ e.report_date }}</td>
+          <td class="muted">{{ {'bmo':'vor Handel','amc':'nach Schluss','dmh':'im Handel'}.get(e.report_hour, 'unbekannt') }}</td>
+          <td class="num">{{ e.eps_estimate|num }}</td>
+          <td class="num">{{ e.eps_actual|num }}</td>
+          <td class="num {{ 'pos' if (e.surprise_pct or 0) > 0 else ('neg' if e.surprise_pct else '') }}">{{ e.surprise_pct|pct(1) }}</td>
+          <td class="num">{{ e.sue|sue }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p class="empty">Noch keine Meldung erfasst.</p>{% endif %}
+  </div>
+</section>
+
+{% include "_legend.html" %}
+
+{% endblock %}

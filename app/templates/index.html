@@ -55,7 +55,8 @@
       <tbody>
       {% for s in signals %}
         <tr>
-          <td class="sym" title="{{ s.tooltip }}">{{ s.symbol }}
+          <td class="sym" title="{{ s.tooltip }}">
+            <a href="/titel/{{ s.symbol }}">{{ s.symbol }}</a>
             {% if s.company %}<span class="company">{{ s.company }}</span>{% endif %}
           </td>
           <td><span class="tag {{ 'buy' if s.signal_type == 'BUY' else 'sell' }}">{{ s.signal_type }}</span></td>

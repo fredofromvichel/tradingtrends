@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% set active = 'tickers' %}
+{% block title %}Alle Titel · PEAD-Signal-POC{% endblock %}
+
+{% block content %}
+<section class="card">
+  <h2>Beobachtete Titel</h2>
+  <p class="runinfo" style="margin:0">
+    Tagesstatus je Titel. „Kein Signal“ ist der Normalfall — die PEAD-Logik äußert
+    sich nur in den {{ settings.holding_period_days }} Handelstagen nach einer
+    Gewinnüberraschung. Ein Klick öffnet den Steckbrief mit Kursverlauf,
+    Kennzahlen und Recherche-Links.
+  </p>
+</section>
+
+<div class="scroll">
+  <table>
+    <thead>
+      <tr>
+        <th><span>Symbol</span></th>
+        <th title="Was die PEAD-Logik heute zu diesem Titel sagt"><span>PEAD-Status</span></th>
+        <th class="num"><span>Letzter Kurs</span></th>
+        <th title="Termin laut Finnhub-Kalender, vorläufig"><span>Nächste Zahlen</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in tickers %}
+      <tr>
+        <td class="sym"><a href="/titel/{{ t.symbol }}">{{ t.symbol }}</a>
+          {% if t.company %}<span class="company">{{ t.company }}</span>{% endif %}
+        </td>
+        <td>
+          {% if t.signal_type %}
+            <span class="tag {{ 'buy' if t.signal_type == 'BUY' else 'sell' }}">{{ t.signal_type }}</span>
+            {% if t.days_remaining is not none %}<span class="muted"> noch {{ t.days_remaining }} HT</span>{% endif %}
+          {% else %}
+            <span class="muted">kein Signal</span>
+          {% endif %}
+        </td>
+        <td class="num">{{ t.last_close|num }}</td>
+        <td>
+          {% if t.next_earnings_date %}
+            {{ t.next_earnings_date|datefmt }}
+            {% if t.days_to_earnings is not none and t.days_to_earnings >= 0 %}
+              <span class="muted">in {{ t.days_to_earnings }} T</span>
+            {% endif %}
+          {% else %}<span class="muted">–</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

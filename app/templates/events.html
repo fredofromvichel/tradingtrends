@@ -32,7 +32,7 @@
       <tbody>
       {% for e in events %}
         <tr>
-          <td class="sym">{{ e.symbol }}</td>
+          <td class="sym"><a href="/titel/{{ e.symbol }}">{{ e.symbol }}</a></td>
           <td>{{ e.report_date }}</td>
           <td class="muted">{{ {'bmo':'vor Handel','amc':'nach Schluss','dmh':'im Handel'}.get(e.report_hour, 'unbekannt') }}</td>
           <td class="muted">{{ e.period or '–' }}</td>

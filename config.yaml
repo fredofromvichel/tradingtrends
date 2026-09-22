@@ -74,3 +74,98 @@ schedule:
   # 22:30 Europe/Berlin = nach US-Boersenschluss.
   cron: "30 22 * * 1-5"
   timezone: "Europe/Berlin"
+
+# ---------------------------------------------------------------------------
+# Recherche-Links auf der Titel-Detailseite
+#
+# Die Begriffe steuern, wie eng die Nachrichtensuche gefasst wird. Zu viele
+# ODER-Alternativen verwaessern das Ergebnis - die ersten 14 je Gruppe werden
+# verwendet. Aenderungen wirken nach: docker compose restart
+# ---------------------------------------------------------------------------
+research:
+  # Sprache und Region der Nachrichtensuche.
+  locale:
+    hl: "de"
+    gl: "DE"
+    ceid: "DE:de"
+
+  # Zeitfenster in Tagen.
+  recent_days: 7      # "Was ist gerade los?"
+  context_days: 30    # Ereignis- und Branchensuche
+
+  # Ereignisse, die den Kurs eines einzelnen Unternehmens typischerweise bewegen.
+  company_event_terms:
+    - Quartalszahlen
+    - Gewinnwarnung
+    - Prognose
+    - Übernahme
+    - Rückruf
+    - Klage
+    - Kartellverfahren
+    - Aktienrückkauf
+    - Kapitalerhöhung
+    - Stellenabbau
+    - guidance
+    - profit warning
+    - lawsuit
+    - recall
+
+  # Ereignisse, die eine ganze Branche treffen.
+  sector_event_terms:
+    - Regulierung
+    - Zölle
+    - Exportkontrolle
+    - Sanktionen
+    - Lieferkette
+    - Rohstoffpreise
+    - Nachfrageeinbruch
+    - Subventionen
+    - tariffs
+    - supply chain
+    - export controls
+    - regulation
+
+  # Fremdmeinung zum Titel.
+  analyst_terms:
+    - Kursziel
+    - hochgestuft
+    - abgestuft
+    - Analysten
+    - price target
+    - upgrade
+    - downgrade
+
+  # Übersetzung der englischen Finnhub-Branchenbezeichnung in Suchbegriffe.
+  # Unbekannte Branchen werden unübersetzt durchgereicht.
+  industry_terms:
+    Technology: [Technologiebranche, Tech-Sektor, technology sector]
+    Semiconductors: [Halbleiterbranche, Chipindustrie, semiconductor industry]
+    Retail: [Einzelhandel, retail sector]
+    Retailing: [Einzelhandel, retail sector]
+    Banking: [Bankensektor, Finanzbranche, banking sector]
+    "Financial Services": [Finanzbranche, Finanzdienstleister, financial sector]
+    Insurance: [Versicherungsbranche, insurance sector]
+    Pharmaceuticals: [Pharmabranche, Pharmaindustrie, pharmaceutical industry]
+    Biotechnology: [Biotechnologie, biotech sector]
+    "Health Care": [Gesundheitsbranche, healthcare sector]
+    "Energy": [Energiesektor, Ölbranche, energy sector]
+    "Oil & Gas": [Ölbranche, Erdgasmarkt, oil and gas sector]
+    Automobiles: [Automobilbranche, Autoindustrie, automotive industry]
+    "Auto Manufacturers": [Automobilbranche, Autoindustrie, automotive industry]
+    Media: [Medienbranche, media sector]
+    "Communications": [Telekommunikation, telecom sector]
+    Telecommunication: [Telekommunikation, telecom sector]
+    "Consumer products": [Konsumgüter, consumer goods]
+    Logistics: [Logistikbranche, logistics sector]
+    Transportation: [Transportbranche, Logistikbranche, transportation sector]
+    Utilities: [Versorger, Energieversorger, utilities sector]
+    "Real Estate": [Immobilienbranche, real estate sector]
+    "Aerospace & Defense": [Luft- und Raumfahrt, Rüstungsindustrie, aerospace defense]
+    Chemicals: [Chemiebranche, chemical industry]
+    Machinery: [Maschinenbau, machinery sector]
+    "Food Products": [Lebensmittelbranche, food industry]
+    "Beverages": [Getränkeindustrie, beverage industry]
+
+# Wie alt dürfen Analystenempfehlungen und der nächste Earnings-Termin werden,
+# bevor sie neu abgerufen werden (Tage).
+outlook_max_age_days: 3

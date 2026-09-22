@@ -7,12 +7,13 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Path as PathParam
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from app import views
+from app import ticker_view, views
 from app.config import Settings, load_settings
 from app.db import get_sessionmaker, init_engine, session_scope, sync_tickers
 from app.logging_conf import configure_logging
@@ -107,7 +108,19 @@ templates.env.filters["pct"] = _fmt_pct
 templates.env.filters["rate"] = _fmt_rate
 templates.env.filters["num"] = _fmt_num
 templates.env.filters["sue"] = _fmt_sue
+def _fmt_date(value) -> str:
+    if value is None:
+        return "–"
+    if isinstance(value, str):
+        try:
+            value = dt.date.fromisoformat(value)
+        except ValueError:
+            return value
+    return value.strftime("%d.%m.%Y")
+
+
 templates.env.filters["dtfmt"] = _fmt_dt
+templates.env.filters["datefmt"] = _fmt_date
 
 
 # -- HTML -------------------------------------------------------------------
@@ -158,6 +171,43 @@ def events(request: Request, session: Session = Depends(get_session)):
     )
 
 
+@app.get("/titel", response_class=None)
+def ticker_index(request: Request, session: Session = Depends(get_session)):
+    settings = get_settings()
+    return templates.TemplateResponse(
+        request=request,
+        name="tickers.html",
+        context={
+            "tickers": ticker_view.ticker_overview(session, settings),
+            "last_run": views.last_run(session),
+            "summary": views.summary(session),
+            "settings": settings,
+        },
+    )
+
+
+@app.get("/titel/{symbol}", response_class=None)
+def ticker_page(
+    request: Request,
+    symbol: str = PathParam(pattern=r"^[A-Za-z0-9.\-]{1,16}$"),
+    session: Session = Depends(get_session),
+):
+    settings = get_settings()
+    detail = ticker_view.ticker_detail(session, settings, symbol)
+    if detail is None:
+        raise HTTPException(status_code=404, detail=f"Unbekanntes Symbol: {symbol}")
+    return templates.TemplateResponse(
+        request=request,
+        name="ticker.html",
+        context={
+            "d": detail,
+            "last_run": views.last_run(session),
+            "summary": views.summary(session),
+            "settings": settings,
+        },
+    )
+
+
 @app.post("/run-now")
 def run_now():
     """Synchroner Lauf, danach zurueck auf die Startseite."""
@@ -192,6 +242,11 @@ def api_events(
     session: Session = Depends(get_session),
 ):
     return JSONResponse(views.earnings_events(session, limit=limit))
+
+
+@app.get("/api/tickers")
+def api_tickers(session: Session = Depends(get_session)):
+    return JSONResponse(ticker_view.ticker_overview(session, get_settings()))
 
 
 @app.get("/api/summary")
