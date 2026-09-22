@@ -161,6 +161,22 @@ und ist beliebig wiederholbar, ohne Duplikate zu erzeugen.
 > Die ausgelieferte Ticker-Liste ist ein **Platzhalter**. Vor dem ersten
 > ernsthaften Lauf dort die eigenen 20 Symbole eintragen.
 
+**Eigene Tickerliste über ein Update retten.** `config.yaml` liegt im Repo,
+ein Branchwechsel oder ein größeres Update bringt also die Fassung aus der
+Versionsverwaltung mit. Damit die eigene Liste nicht verlorengeht:
+
+```bash
+cp config.yaml ~/config.mein.yaml     # vorher sichern
+git pull                              # oder: git checkout <branch>
+python3 tools/merge-tickers.py ~/config.mein.yaml config.yaml
+make restart
+```
+
+Das Werkzeug überträgt **nur** den `tickers`-Block und lässt alles andere
+unangetastet — auch die Kommentare, die in dieser Datei die halbe
+Dokumentation sind. Vor dem Schreiben legt es `config.yaml.bak` an. Findet es
+keinen brauchbaren Block, bricht es ab, statt die Zieldatei zu beschädigen.
+
 | Parameter | Default | Bedeutung |
 |---|---|---|
 | `tickers` | 20 US-Large-Caps (Platzhalter) | Beobachtete Symbole |
@@ -478,7 +494,7 @@ app/
 ├── pipeline.py          Orchestrierung des Tageslaufs
 ├── scheduler.py         APScheduler
 ├── views.py             Aufbereitung für Frontend und API
-├── cli.py               run / check / status
+├── cli.py               run / check / status / seed / backfill
 └── sources/
     ├── finnhub_client.py
     └── prices.py        yfinance
@@ -505,7 +521,7 @@ app/
 make test
 ```
 
-139 Tests, ohne Netzzugriff:
+149 Tests, ohne Netzzugriff:
 
 * `tests/test_signals.py` — Surprise, SUE, Schwellenwerte, Short-Rendite,
   Handelstags-Arithmetik über Wochenenden, Einstiegstag je Meldezeitpunkt.
