@@ -58,30 +58,71 @@ docker compose up -d --build
 
 ## Zugriff
 
-Der Port ist bewusst **nur auf das Loopback-Interface** des Servers gebunden
-(`127.0.0.1:8000`). Die Anwendung hat keine Authentifizierung — sie darf nicht
-offen im Netz stehen. Zugriff vom Arbeitsrechner per SSH-Tunnel:
+Zwei Betriebsarten, beide über die `.env`.
+
+**Standard: nur lokal, Zugriff per SSH-Tunnel.** `BIND_ADDR=127.0.0.1` bindet
+den Port ausschließlich auf das Loopback-Interface.
 
 ```bash
 ssh -N -L 8000:localhost:8000 user@dein-server
 # danach im Browser: http://localhost:8000
 ```
 
-Soll die Oberfläche direkt im LAN erreichbar sein, muss vorher eine
-Authentifizierung davor (Reverse-Proxy mit Basic-Auth o. ä.). Erst dann in der
-`.env` `BIND_ADDR=0.0.0.0` setzen.
+**Im Netz erreichbar, beschränkt auf bekannte Adressen.** `BIND_ADDR=0.0.0.0`
+veröffentlicht den Port auf allen Schnittstellen; eine Middleware lässt dann
+nur Absender aus `ALLOWED_IPS` durch:
+
+```bash
+BIND_ADDR=0.0.0.0
+ALLOWED_IPS=203.0.113.7               # oder: 203.0.113.7,198.51.100.0/24
+```
+
+Danach `make up` (nicht `make restart` — siehe oben). Die eigene Adresse zeigt
+`curl -s https://ifconfig.me`.
+
+Drei Punkte, die dabei zählen:
+
+- **Ohne `ALLOWED_IPS` startet der Container nicht**, sobald `BIND_ADDR` nicht
+  mehr Loopback ist. Ein offener Dienst ohne Authentifizierung soll nicht aus
+  Versehen entstehen.
+- **Die Prüfung sitzt in der Anwendung, nicht in der Firewall.** Docker
+  veröffentlicht Ports über eigene iptables-Ketten, an denen die üblichen
+  `ufw`-Regeln der INPUT-Kette vorbeilaufen — eine Regel, die man dort
+  einträgt, greift für veröffentlichte Container-Ports oft schlicht nicht. Wer
+  zusätzlich eine Firewallregel will, muss sie in die Kette `DOCKER-USER`
+  hängen.
+- **`X-Forwarded-For` wird ignoriert.** Entschieden wird allein anhand der
+  TCP-Gegenstelle. Ohne vorgeschalteten Reverse-Proxy kann diesen Kopf jeder
+  Absender selbst setzen; wer ihm traut, hebt die Sperre auf. Localhost ist
+  immer erlaubt, damit der Healthcheck im Container funktioniert.
+
+Abgewiesene Anfragen bekommen 403 und sehen ihre eigene Adresse — praktisch,
+wenn sich die IP geändert hat.
 
 ### Seiten
 
 | Pfad | Inhalt |
 |---|---|
-| `/` | Offene Signale, Kennzahlen, Button „Jetzt aktualisieren" |
+| `/` | **Übersicht**: was demnächst ausläuft, nächste Termine, Kennzahlen beider Quellen, offene Positionen |
 | `/history` | Geschlossene Signale mit realisierter Rendite |
 | `/titel` | Tagesstatus aller beobachteten Titel |
 | `/titel/<SYMBOL>` | Steckbrief: PEAD-Status, Kursverlauf, Kennzahlen, Termin, Analysten, Recherche-Links |
 | `/momentum` | Zweite Signalquelle: Rangfolge, aktueller Korb, Kennzahlen |
 | `/events` | Erfasste Earnings-Events (Rohdaten-Kontrolle) |
 | `/docs` | Interaktive OpenAPI-Dokumentation |
+
+Das Navigationskonzept folgt der Idee, dass der häufige Fall ohne Klicken
+auskommt: die Übersicht beantwortet „steht etwas an, was läuft, was kommt"
+auf einer Seite. Dazu kommen drei Hilfen, die den Weg zurück zur Liste
+sparen:
+
+- **Blättern auf dem Steckbrief.** Vor/Zurück zwischen Titeln, auch per
+  Tastatur (`j`/`k` oder Pfeiltasten), mit Positionsanzeige „7 von 23".
+- **Sortierbare Tabellen.** Klick oder Enter auf eine Spaltenüberschrift.
+  Sortiert wird nach dem Rohwert, nicht nach dem angezeigten Text — sonst
+  landete „+8,66 %" hinter „1 234,50".
+- **Filter auf der Titelliste.** Freitext über Symbol, Firma und Branche,
+  mit Trefferzähler.
 
 Jede Seite trägt eine aufklappbare **Legende**, die alle Begriffe für Einsteiger
 erklärt — PEAD, EPS, Surprise, SUE, Handelstage, Konfidenzintervall. Zusätzlich
@@ -574,7 +615,7 @@ app/
 make test
 ```
 
-188 Tests, ohne Netzzugriff:
+202 Tests, ohne Netzzugriff:
 
 * `tests/test_signals.py` — Surprise, SUE, Schwellenwerte, Short-Rendite,
   Handelstags-Arithmetik über Wochenenden, Einstiegstag je Meldezeitpunkt.

@@ -59,7 +59,7 @@
         {% if summary.win_rate is not none %}{{ summary.win_rate|rate(1) }}
         {% else %}<span class="unreliable">n = {{ summary.closed_count }}</span>{% endif %}
         {% if summary.closed_count %}
-          <small>95 %: {{ summary.win_rate_low|rate }} bis {{ summary.win_rate_high|rate }}</small>
+          <small>95 %: {{ summary.win_rate_low|ratebare }} bis {{ summary.win_rate_high|rate }}</small>
         {% endif %}
       </dd>
     </div>
@@ -110,7 +110,7 @@
   <h2>Offene Positionen</h2>
   <div class="scroll">
     {% if open_positions %}
-    <table>
+    <table data-sortable>
       <thead>
         <tr>
           <th><span>Symbol</span></th>
@@ -163,7 +163,7 @@
     wie der nächste Korb aussähe.
   </p>
   <div class="scroll">
-    <table>
+    <table data-sortable>
       <thead>
         <tr><th class="num"><span>Rang</span></th><th><span>Symbol</span></th>
           <th class="num"><span>Momentum</span></th><th class="num"><span>Kurstage</span></th></tr>
@@ -188,7 +188,7 @@
   <h2>Geschlossene Positionen</h2>
   <div class="scroll">
     {% if closed_positions %}
-    <table>
+    <table data-sortable>
       <thead>
         <tr><th><span>Symbol</span></th><th><span>Seite</span></th>
           <th class="num"><span>Momentum</span></th><th><span>Einstieg</span></th>

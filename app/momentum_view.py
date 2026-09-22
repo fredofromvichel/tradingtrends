@@ -13,7 +13,9 @@ from dataclasses import asdict, dataclass
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app import market_context
 from app.config import Settings
+from app.market_context import MarketContext
 from app.models import MomentumRebalance, MomentumSignal, Price, Ticker
 from app.momentum import momentum_score, required_history
 from app.signals import CLOSED, OPEN, trading_days_elapsed
@@ -45,30 +47,18 @@ class MomentumView:
         return asdict(self)
 
 
-def _latest_close(session: Session, symbol: str) -> float | None:
-    row = session.scalar(
-        select(Price).where(Price.symbol == symbol).order_by(Price.date.desc()).limit(1)
-    )
-    return row.close if row else None
-
-
-def _trading_dates(session: Session, symbol: str) -> list[dt.date]:
-    return list(
-        session.scalars(
-            select(Price.date).where(Price.symbol == symbol).order_by(Price.date)
-        ).all()
-    )
-
-
-def _build(session: Session, signal: MomentumSignal) -> MomentumView:
-    ticker = session.get(Ticker, signal.symbol)
+def _build(
+    session: Session, signal: MomentumSignal, context: MarketContext | None = None
+) -> MomentumView:
+    context = context or market_context.load(session, [signal.symbol])
+    ticker = context.ticker(signal.symbol)
     rebalance = session.get(MomentumRebalance, signal.rebalance_id)
-    current = _latest_close(session, signal.symbol)
+    current = context.close(signal.symbol)
 
     days_remaining = None
     progress = None
     if signal.entry_date is not None:
-        elapsed = trading_days_elapsed(_trading_dates(session, signal.symbol), signal.entry_date)
+        elapsed = trading_days_elapsed(context.dates(signal.symbol), signal.entry_date)
         days_remaining = max(0, signal.holding_period_days - elapsed)
         if signal.holding_period_days > 0:
             progress = min(1.0, elapsed / signal.holding_period_days)
@@ -106,7 +96,8 @@ def open_positions(session: Session) -> list[MomentumView]:
         .where(MomentumSignal.status == OPEN)
         .order_by(MomentumSignal.direction, MomentumSignal.rank)
     ).all()
-    return [_build(session, s) for s in rows]
+    context = market_context.load(session, {s.symbol for s in rows})
+    return [_build(session, s, context) for s in rows]
 
 
 def closed_positions(session: Session, limit: int = 200) -> list[MomentumView]:
@@ -116,7 +107,8 @@ def closed_positions(session: Session, limit: int = 200) -> list[MomentumView]:
         .order_by(MomentumSignal.exit_date.desc())
         .limit(limit)
     ).all()
-    return [_build(session, s) for s in rows]
+    context = market_context.load(session, {s.symbol for s in rows})
+    return [_build(session, s, context) for s in rows]
 
 
 def for_symbol(session: Session, symbol: str) -> list[MomentumView]:
@@ -126,7 +118,8 @@ def for_symbol(session: Session, symbol: str) -> list[MomentumView]:
         .order_by(MomentumSignal.created_at.desc())
         .limit(12)
     ).all()
-    return [_build(session, s) for s in rows]
+    context = market_context.load(session, {s.symbol for s in rows})
+    return [_build(session, s, context) for s in rows]
 
 
 def last_rebalance(session: Session) -> MomentumRebalance | None:
@@ -174,20 +167,21 @@ def readiness(session: Session, settings: Settings) -> dict:
 def current_scores(session: Session, settings: Settings) -> list[dict]:
     """Momentum-Werte aller Titel, absteigend - auch ausserhalb einer Umschichtung."""
     cfg = settings.momentum
+    tickers = session.scalars(
+        select(Ticker).where(Ticker.active.is_(True)).order_by(Ticker.symbol)
+    ).all()
+
+    # Derselbe Kontext, den die uebrigen Ansichten dieser Seite schon
+    # geladen haben - kein zweiter Durchlauf durch die Kurstabelle.
+    context = market_context.load(session, [t.symbol for t in tickers])
+
     out: list[dict] = []
-    for symbol in session.scalars(
-        select(Ticker.symbol).where(Ticker.active.is_(True)).order_by(Ticker.symbol)
-    ).all():
-        closes = list(
-            session.scalars(
-                select(Price.close).where(Price.symbol == symbol).order_by(Price.date)
-            ).all()
-        )
-        ticker = session.get(Ticker, symbol)
+    for ticker in tickers:
+        closes = context.close_series(ticker.symbol)
         out.append(
             {
-                "symbol": symbol,
-                "company": ticker.name if ticker else None,
+                "symbol": ticker.symbol,
+                "company": ticker.name,
                 "score": momentum_score(closes, cfg.lookback_days, cfg.skip_days),
                 "bars": len(closes),
             }

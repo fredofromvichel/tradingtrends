@@ -45,6 +45,21 @@ if [ ! -f "${CONFIG_PATH:-/app/config.yaml}" ]; then
     fail "config.yaml fehlt unter ${CONFIG_PATH:-/app/config.yaml}."
 fi
 
+# Ein auf allen Schnittstellen veroeffentlichter Port ohne Allowlist waere ein
+# offener Dienst ohne Authentifizierung. Lieber gar nicht starten.
+if [ "${BIND_ADDR:-127.0.0.1}" != "127.0.0.1" ] && [ "${BIND_ADDR:-}" != "localhost" ]; then
+    if [ -z "${ALLOWED_IPS:-}" ]; then
+        fail \
+          "BIND_ADDR ist ${BIND_ADDR} - der Port ist damit im Netz erreichbar," \
+          "aber ALLOWED_IPS ist leer. Das waere ein offener Dienst ohne" \
+          "Authentifizierung." \
+          "" \
+          "Entweder in der .env die eigene IP eintragen:" \
+          "  ALLOWED_IPS=203.0.113.7" \
+          "oder BIND_ADDR wieder auf 127.0.0.1 setzen und den SSH-Tunnel nutzen."
+    fi
+fi
+
 if [ "$(id -u)" = "0" ]; then
     exec gosu app "$@"
 fi

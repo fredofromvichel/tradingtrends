@@ -71,6 +71,9 @@ class Settings:
     finnhub_recheck_days: int = 14
     # Yahoo als Ausweichquelle, wo Finnhubs Tarif nicht greift.
     earnings_fallback_enabled: bool = True
+    # Absender-IPs, die zugreifen duerfen. Kommt aus der Umgebung, nicht aus
+    # config.yaml - es ist eine Betriebseinstellung, keine Fachlogik.
+    allowed_ips: str = ""
     schedule: Schedule = field(default_factory=Schedule)
     research: Research = field(default_factory=Research)
     momentum: Momentum = field(default_factory=Momentum)
@@ -169,6 +172,7 @@ def load_settings(path: Path | None = None) -> Settings:
         earnings_fallback_enabled=_as_bool(
             str(raw.get("earnings_fallback_enabled", True)), True
         ),
+        allowed_ips=(os.getenv("ALLOWED_IPS") or "").strip(),
         schedule=schedule,
         research=research,
         momentum=momentum,

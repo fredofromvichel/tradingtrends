@@ -9,11 +9,12 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi import Path as PathParam
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from app import momentum_view, ticker_view, views
+from app import access, dashboard, momentum_view, ticker_view, views
 from app.config import Settings, load_settings
 from app.db import get_sessionmaker, init_engine, session_scope, sync_tickers
 from app.logging_conf import configure_logging
@@ -54,6 +55,10 @@ async def lifespan(app: FastAPI):
     with session_scope() as session:
         sync_tickers(session, settings.tickers)
 
+    networks = access.parse_allowlist(settings.allowed_ips)
+    STATE["allowed_networks"] = networks
+    log.info("Zugriff erlaubt fuer: %s", access.describe(networks))
+
     STATE["settings"] = settings
     STATE["scheduler"] = start_scheduler(settings)
 
@@ -74,6 +79,33 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="PEAD-Signal-POC", version="1.0.0", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
+
+@app.middleware("http")
+async def restrict_by_ip(request: Request, call_next):
+    """Laesst nur Absender aus ALLOWED_IPS durch.
+
+    Entschieden wird anhand der TCP-Gegenstelle. Weiterleitungskoepfe wie
+    X-Forwarded-For werden bewusst ignoriert: ohne vorgeschalteten Proxy
+    kann sie jeder selbst setzen.
+    """
+    networks = STATE.get("allowed_networks")
+    if networks is None:      # vor dem Start der Lifespan, etwa im Test
+        return await call_next(request)
+
+    client_ip = request.client.host if request.client else None
+    if access.is_allowed(client_ip, networks):  # type: ignore[arg-type]
+        return await call_next(request)
+
+    log.warning("Zugriff abgewiesen: %s auf %s", client_ip, request.url.path)
+    return PlainTextResponse(
+        "Zugriff verweigert.\n\n"
+        f"Deine Adresse: {client_ip or 'unbekannt'}\n"
+        "Sie steht nicht in ALLOWED_IPS. Eintragen in der .env auf dem Server,\n"
+        "danach 'make up' (nicht 'make restart').\n",
+        status_code=403,
+    )
 
 
 # -- Jinja-Filter -----------------------------------------------------------
@@ -94,6 +126,12 @@ def _fmt_rate(value: float | None, digits: int = 0) -> str:
     return "–" if value is None else f"{value * 100:.{digits}f} %"
 
 
+def _fmt_rate_bare(value: float | None, digits: int = 0) -> str:
+    """Anteil ohne Einheit - fuer die untere Grenze eines Intervalls, damit
+    das Prozentzeichen nur einmal dasteht und die Kachel nicht umbricht."""
+    return "–" if value is None else f"{value * 100:.{digits}f}"
+
+
 def _fmt_num(value: float | None, digits: int = 2) -> str:
     return "–" if value is None else f"{value:,.{digits}f}".replace(",", " ")
 
@@ -112,6 +150,7 @@ def _fmt_dt(value: dt.datetime | None) -> str:
 
 templates.env.filters["pct"] = _fmt_pct
 templates.env.filters["rate"] = _fmt_rate
+templates.env.filters["ratebare"] = _fmt_rate_bare
 templates.env.filters["num"] = _fmt_num
 templates.env.filters["sue"] = _fmt_sue
 def _fmt_date(value) -> str:
@@ -135,15 +174,16 @@ templates.env.filters["datefmt"] = _fmt_date
 @app.get("/", response_class=None)
 def index(request: Request, session: Session = Depends(get_session)):
     settings = get_settings()
+    data = dashboard.build(session, settings)
     return templates.TemplateResponse(
         request=request,
         name="index.html",
         context={
-            "signals": views.open_signals(session),
-            "summary": views.summary(session),
+            "d": data,
+            # Die Legende erwartet diese beiden Namen.
+            "summary": data.pead_summary,
             "last_run": views.last_run(session),
             "settings": settings,
-            "ticker_count": len(settings.tickers),
             "notice": request.query_params.get("notice"),
         },
     )

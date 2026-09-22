@@ -1,80 +1,136 @@
 {% extends "base.html" %}
-{% set active = 'open' %}
-{% block title %}Offene Signale · PEAD-Signal-POC{% endblock %}
+{% set active = 'dashboard' %}
+{% block title %}Übersicht · PEAD-Signal-POC{% endblock %}
 
 {% block content %}
 
 {% if notice %}
-  {% if notice == 'ok' %}
-    <div class="flash ok">Lauf abgeschlossen.</div>
-  {% elif notice == 'partial' %}
-    <div class="flash warn">Lauf abgeschlossen, aber mit Fehlern – Details unten und in <code>docker compose logs</code>.</div>
-  {% elif notice == 'busy' %}
-    <div class="flash warn">Es läuft bereits ein Durchlauf. Bitte kurz warten und neu laden.</div>
-  {% else %}
-    <div class="flash err">Lauf fehlgeschlagen – Details unten und in <code>docker compose logs</code>.</div>
-  {% endif %}
+  {% if notice == 'ok' %}<div class="flash ok">Lauf abgeschlossen.</div>
+  {% elif notice == 'partial' %}<div class="flash warn">Lauf abgeschlossen, aber mit Fehlern – Details im Seitenkopf.</div>
+  {% elif notice == 'busy' %}<div class="flash warn">Es läuft bereits ein Durchlauf. Bitte kurz warten und neu laden.</div>
+  {% else %}<div class="flash err">Lauf fehlgeschlagen – Details im Seitenkopf.</div>{% endif %}
 {% endif %}
-
-<div class="callout">
-  <span class="label">Aussagekraft</span>
-  Diese Umgebung beobachtet {{ ticker_count }} Titel und erzeugt damit realistisch
-  5–10 Earnings-Events pro Quartal. Das genügt, um die Pipeline technisch zu verifizieren
-  (Datenanbindung, Signalberechnung, Darstellung), <strong>nicht</strong> um die Wirksamkeit
-  der PEAD-Strategie statistisch zu beurteilen. Die Schwellenwerte
-  (SUE {{ settings.sue_threshold_buy }} / {{ settings.sue_threshold_sell }}, Fallback
-  {{ (settings.surprise_pct_fallback_buy * 100)|round(1) }} %) und die Haltedauer von
-  {{ settings.holding_period_days }} Handelstagen sind Literatur-Startwerte, keine optimierten Parameter.
-</div>
 
 {% include "_runbar.html" %}
 
-{% include "_legend.html" %}
+{# Wichtigstes zuerst: was passiert demnächst, was läuft bald aus. #}
+<div class="dash-grid">
 
-{% include "_stats.html" %}
+  <section class="card dash-urgent">
+    <h2>Läuft demnächst aus</h2>
+    {% if d.ending_soon %}
+      <ul class="dash-list">
+        {% for s in d.ending_soon %}
+        <li>
+          <a href="/titel/{{ s.symbol }}" class="dash-sym">{{ s.symbol }}</a>
+          <span class="tag {{ 'buy' if s.signal_type|default(s.direction, true) in ('BUY','LONG') else 'sell' }}">{{ s.signal_type|default(s.direction, true) }}</span>
+          <span class="dash-when">{% if s.days_remaining == 0 %}heute fällig{% else %}noch {{ s.days_remaining }} HT{% endif %}</span>
+          <span class="num {{ 'pos' if (s.unrealized_pct or 0) > 0 else ('neg' if s.unrealized_pct else '') }}">{{ s.unrealized_pct|pct(1) }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="empty-inline">In den nächsten {{ d.ending_soon_days }} Handelstagen endet keine Position.</p>
+    {% endif %}
+  </section>
+
+  <section class="card dash-upcoming">
+    <h2>Nächste Quartalszahlen</h2>
+    {% if d.upcoming %}
+      <ul class="dash-list">
+        {% for u in d.upcoming[:8] %}
+        <li>
+          <a href="/titel/{{ u.symbol }}" class="dash-sym">{{ u.symbol }}</a>
+          <span class="dash-company">{{ u.company or '' }}</span>
+          <span class="dash-when">{{ u.date|datefmt }}{% if u.days_away == 0 %} · heute{% elif u.days_away > 0 %} · in {{ u.days_away }} T{% endif %}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      <p class="runinfo" style="margin:10px 0 0">Vor diesen Terminen ist kein neues PEAD-Signal zu erwarten.</p>
+    {% else %}
+      <p class="empty-inline">Keine Termine in den nächsten {{ d.upcoming_days }} Tagen bekannt.</p>
+    {% endif %}
+  </section>
+
+</div>
+
+{# Beide Quellen nebeneinander, aber sichtbar getrennt. #}
+<section class="card">
+  <h2>Kennzahlen</h2>
+  <div class="dual">
+    <div class="dual-col">
+      <h3>PEAD <span class="muted">· Gewinnüberraschungen</span></h3>
+      <dl class="stats compact">
+        <div class="stat"><dt>Offen</dt><dd>{{ d.pead_summary.open_count }}</dd></div>
+        <div class="stat"><dt>Geschlossen</dt><dd>{{ d.pead_summary.closed_count }}</dd></div>
+        <div class="stat"><dt>Trefferquote</dt>
+          <dd>{% if d.pead_summary.win_rate is not none %}{{ d.pead_summary.win_rate|rate(1) }}
+              {% else %}<span class="unreliable">n = {{ d.pead_summary.closed_count }}</span>{% endif %}
+              {% if d.pead_summary.closed_count %}<small>95 %: {{ d.pead_summary.win_rate_low|ratebare }}–{{ d.pead_summary.win_rate_high|rate }}</small>{% endif %}</dd></div>
+        <div class="stat"><dt>Ø Rendite</dt>
+          <dd>{% if d.pead_summary.avg_return_pct is not none %}
+                <span class="{% if d.pead_summary.effect_distinguishable %}{{ 'pos' if d.pead_summary.avg_return_pct > 0 else 'neg' }}{% endif %}">{{ d.pead_summary.avg_return_pct|pct }}</span>
+              {% else %}<span class="unreliable">n = {{ d.pead_summary.closed_count }}</span>{% endif %}</dd></div>
+      </dl>
+      <a class="dash-more" href="/history">Verlauf ansehen →</a>
+    </div>
+    <div class="dual-col">
+      <h3>Momentum <span class="muted">· relative Stärke</span></h3>
+      <dl class="stats compact">
+        <div class="stat"><dt>Offen</dt><dd>{{ d.momentum_summary.open_count }}</dd></div>
+        <div class="stat"><dt>Geschlossen</dt><dd>{{ d.momentum_summary.closed_count }}</dd></div>
+        <div class="stat"><dt>Trefferquote</dt>
+          <dd>{% if d.momentum_summary.win_rate is not none %}{{ d.momentum_summary.win_rate|rate(1) }}
+              {% else %}<span class="unreliable">n = {{ d.momentum_summary.closed_count }}</span>{% endif %}
+              {% if d.momentum_summary.closed_count %}<small>95 %: {{ d.momentum_summary.win_rate_low|ratebare }}–{{ d.momentum_summary.win_rate_high|rate }}</small>{% endif %}</dd></div>
+        <div class="stat"><dt>Ø Rendite</dt>
+          <dd>{% if d.momentum_summary.avg_return_pct is not none %}
+                <span class="{% if d.momentum_summary.effect_distinguishable %}{{ 'pos' if d.momentum_summary.avg_return_pct > 0 else 'neg' }}{% endif %}">{{ d.momentum_summary.avg_return_pct|pct }}</span>
+              {% else %}<span class="unreliable">n = {{ d.momentum_summary.closed_count }}</span>{% endif %}</dd></div>
+      </dl>
+      <a class="dash-more" href="/momentum">Rangfolge ansehen →</a>
+    </div>
+  </div>
+  <p class="runinfo" style="margin:14px 0 0">
+    Beide Quellen laufen getrennt und werden nie verrechnet. Punktwerte erscheinen erst ab
+    n = {{ d.pead_summary.min_sample }}; darunter steht das 95 %-Intervall, dessen Breite
+    die eigentliche Aussage ist.
+  </p>
+</section>
 
 <section>
-  <h2>Offene Signale</h2>
+  <h2>Offene PEAD-Signale</h2>
   <div class="scroll">
-    {% if signals %}
-    <table>
+    {% if d.pead_open %}
+    <table data-sortable>
       <thead>
         <tr>
-          <th title="Börsenkürzel. Mouseover zeigt Firmenname, Branche und Börse."><span>Symbol</span></th>
-          <th title="Klassifikation der Pipeline, keine Anlageempfehlung. SELL wird als Leerverkauf gerechnet."><span>Signal</span></th>
-          <th title="Tag der Quartalsmeldung, der das Signal ausgelöst hat"><span>Trigger</span></th>
-          <th title="Erster nach der Meldung tatsächlich handelbarer Schlusskurs"><span>Einstieg</span></th>
-          <th class="num" title="Schlusskurs am Einstiegstag, split- und dividendenbereinigt"><span>Einstiegskurs</span></th>
+          <th title="Börsenkürzel. Mouseover zeigt Firmenname und Branche."><span>Symbol</span></th>
+          <th title="Klassifikation der Pipeline, keine Anlageempfehlung"><span>Signal</span></th>
+          <th title="Tag der Quartalsmeldung"><span>Trigger</span></th>
+          <th class="num" title="Schlusskurs am Einstiegstag"><span>Einstieg</span></th>
           <th class="num" title="Letzter bekannter Schlusskurs"><span>Aktuell</span></th>
-          <th class="num" title="Buchgewinn/-verlust bis jetzt. Ändert sich täglich, erst beim Ausstieg endgültig."><span>Unrealisiert</span></th>
-          <th class="num" title="Standardized Unexpected Earnings: Überraschung geteilt durch die übliche Schwankung dieses Unternehmens. „–“ = zu wenig Historie, dann zählt die reine Surprise."><span>SUE</span></th>
-          <th class="num" title="Abweichung des tatsächlichen Gewinns je Aktie von der Analystenschätzung"><span>Surprise</span></th>
-          <th class="num" title="Verstrichene und verbleibende Handelstage der Haltedauer (Börsentage, ohne Wochenenden)"><span>Verlauf</span></th>
+          <th class="num" title="Buchgewinn bis jetzt, erst beim Ausstieg endgültig"><span>Unrealisiert</span></th>
+          <th class="num" title="Standardized Unexpected Earnings"><span>SUE</span></th>
+          <th class="num" title="Verbleibende Handelstage"><span>Verlauf</span></th>
         </tr>
       </thead>
       <tbody>
-      {% for s in signals %}
+      {% for s in d.pead_open %}
         <tr>
-          <td class="sym" title="{{ s.tooltip }}">
-            <a href="/titel/{{ s.symbol }}">{{ s.symbol }}</a>
-            {% if s.company %}<span class="company">{{ s.company }}</span>{% endif %}
-          </td>
+          <td class="sym" title="{{ s.tooltip }}"><a href="/titel/{{ s.symbol }}">{{ s.symbol }}</a>
+            {% if s.company %}<span class="company">{{ s.company }}</span>{% endif %}</td>
           <td><span class="tag {{ 'buy' if s.signal_type == 'BUY' else 'sell' }}">{{ s.signal_type }}</span></td>
-          <td>{{ s.trigger_date }}</td>
-          <td>{% if s.entry_date %}{{ s.entry_date }}{% else %}<span class="muted">offen</span>{% endif %}</td>
-          <td class="num">{{ s.entry_price|num }}</td>
-          <td class="num">{{ s.current_price|num }}</td>
-          <td class="num {{ 'pos' if (s.unrealized_pct or 0) > 0 else ('neg' if s.unrealized_pct else '') }}">
-            {{ s.unrealized_pct|pct }}</td>
-          <td class="num">{{ s.sue|sue }}</td>
-          <td class="num">{{ s.surprise_pct|pct(1) }}</td>
-          <td class="num">
+          <td data-sort="{{ s.trigger_date }}">{{ s.trigger_date }}</td>
+          <td class="num" data-sort="{{ s.entry_price or 0 }}">{{ s.entry_price|num }}</td>
+          <td class="num" data-sort="{{ s.current_price or 0 }}">{{ s.current_price|num }}</td>
+          <td class="num {{ 'pos' if (s.unrealized_pct or 0) > 0 else ('neg' if s.unrealized_pct else '') }}"
+              data-sort="{{ s.unrealized_pct or 0 }}">{{ s.unrealized_pct|pct }}</td>
+          <td class="num" data-sort="{{ s.sue or 0 }}">{{ s.sue|sue }}</td>
+          <td class="num" data-sort="{{ s.days_remaining if s.days_remaining is not none else 999 }}">
             {% if s.days_remaining is not none %}
-              <span class="progress"
-                    title="{{ s.days_elapsed }} von {{ s.holding_period_days }} Handelstagen verstrichen, noch {{ s.days_remaining }}">
-                <span class="progress-track">
-                  <span class="progress-fill" style="width: {{ (s.progress * 100)|round(0, 'floor')|int }}%"></span>
-                </span>
+              <span class="progress" title="{{ s.days_elapsed }} von {{ s.holding_period_days }} Handelstagen verstrichen">
+                <span class="progress-track"><span class="progress-fill" style="width: {{ (s.progress * 100)|round(0,'floor')|int }}%"></span></span>
                 <span class="progress-label">noch {{ s.days_remaining }} HT</span>
               </span>
             {% else %}<span class="muted">–</span>{% endif %}
@@ -84,9 +140,64 @@
       </tbody>
     </table>
     {% else %}
-      <p class="empty">Keine offenen Signale. Entweder liegt noch kein Lauf vor, oder es gab
-      im Beobachtungszeitraum keine Earnings-Überraschung über der Schwelle.</p>
+      <p class="empty">Keine offenen PEAD-Signale. Das ist der Normalfall außerhalb der
+      Berichtssaison – Signale entstehen nur nach einer Gewinnüberraschung über der Schwelle.</p>
     {% endif %}
   </div>
 </section>
+
+<section>
+  <h2>Offener Momentum-Korb</h2>
+  <div class="scroll">
+    {% if d.momentum_open %}
+    <table data-sortable>
+      <thead>
+        <tr>
+          <th><span>Symbol</span></th>
+          <th title="LONG = Spitzengruppe, SHORT = Schlussgruppe"><span>Seite</span></th>
+          <th class="num" title="Platz in der Rangfolge"><span>Rang</span></th>
+          <th class="num" title="Rendite im Formationsfenster, ohne den jüngsten Monat"><span>Momentum</span></th>
+          <th class="num"><span>Einstieg</span></th>
+          <th class="num"><span>Unrealisiert</span></th>
+          <th class="num"><span>Verlauf</span></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for m in d.momentum_open %}
+        <tr>
+          <td class="sym"><a href="/titel/{{ m.symbol }}">{{ m.symbol }}</a>
+            {% if m.company %}<span class="company">{{ m.company }}</span>{% endif %}</td>
+          <td><span class="tag {{ 'buy' if m.direction == 'LONG' else 'sell' }}">{{ m.direction }}</span></td>
+          <td class="num" data-sort="{{ m.rank }}">{{ m.rank }}</td>
+          <td class="num {{ 'pos' if m.momentum_score > 0 else 'neg' }}" data-sort="{{ m.momentum_score }}">{{ m.momentum_score|pct(1) }}</td>
+          <td class="num" data-sort="{{ m.entry_price or 0 }}">{{ m.entry_price|num }}</td>
+          <td class="num {{ 'pos' if (m.unrealized_pct or 0) > 0 else ('neg' if m.unrealized_pct else '') }}"
+              data-sort="{{ m.unrealized_pct or 0 }}">{{ m.unrealized_pct|pct }}</td>
+          <td class="num" data-sort="{{ m.days_remaining if m.days_remaining is not none else 999 }}">
+            {% if m.days_remaining is not none %}
+              <span class="progress"><span class="progress-track"><span class="progress-fill"
+                style="width: {{ (m.progress * 100)|round(0,'floor')|int }}%"></span></span>
+                <span class="progress-label">noch {{ m.days_remaining }} HT</span></span>
+            {% else %}<span class="muted">–</span>{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <p class="empty">Kein Korb offen. Umgeschichtet wird beim ersten Lauf eines Monats.</p>
+    {% endif %}
+  </div>
+</section>
+
+<div class="callout small">
+  <span class="label">Aussagekraft</span>
+  {{ d.ticker_count }} Titel erzeugen realistisch wenige Ereignisse pro Quartal. Das genügt,
+  um die Pipeline zu verifizieren – <strong>nicht</strong>, um die Wirksamkeit der Strategien
+  statistisch zu beurteilen. Schwellenwerte und Haltedauern sind Literatur-Startwerte,
+  keine optimierten Parameter.
+</div>
+
+{% include "_legend.html" %}
+
 {% endblock %}

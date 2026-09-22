@@ -8,7 +8,9 @@ from dataclasses import dataclass, asdict
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import EarningsEvent, PipelineRun, Price, Signal, Ticker
+from app import market_context
+from app.market_context import MarketContext
+from app.models import EarningsEvent, PipelineRun, Price, Signal
 from app.signals import CLOSED, OPEN, trading_days_elapsed
 from app.stats import MIN_SAMPLE, estimate_mean, estimate_rate
 
@@ -53,30 +55,22 @@ class SignalView:
         return " · ".join(parts)
 
 
-def _latest_price(session: Session, symbol: str) -> Price | None:
-    return session.scalar(
-        select(Price).where(Price.symbol == symbol).order_by(Price.date.desc()).limit(1)
-    )
+def _build(
+    session: Session, signal: Signal, context: MarketContext | None = None
+) -> SignalView:
+    # Ohne Kontext einen fuer dieses eine Symbol laden - bequem fuer
+    # Einzelaufrufe, aber in Schleifen immer den geteilten Kontext uebergeben.
+    context = context or market_context.load(session, [signal.symbol])
 
-
-def _trading_dates(session: Session, symbol: str) -> list[dt.date]:
-    return list(
-        session.scalars(
-            select(Price.date).where(Price.symbol == symbol).order_by(Price.date)
-        ).all()
-    )
-
-
-def _build(session: Session, signal: Signal) -> SignalView:
-    latest = _latest_price(session, signal.symbol)
-    current_price = latest.close if latest else None
-    ticker = session.get(Ticker, signal.symbol)
+    current_price = context.close(signal.symbol)
+    latest_date = context.last_date.get(signal.symbol)
+    ticker = context.ticker(signal.symbol)
 
     days_elapsed = None
     days_remaining = None
     progress = None
     if signal.entry_date is not None:
-        dates = _trading_dates(session, signal.symbol)
+        dates = context.dates(signal.symbol)
         days_elapsed = trading_days_elapsed(dates, signal.entry_date)
         days_remaining = max(0, signal.holding_period_days - days_elapsed)
         if signal.holding_period_days > 0:
@@ -99,7 +93,7 @@ def _build(session: Session, signal: Signal) -> SignalView:
         entry_date=signal.entry_date.isoformat() if signal.entry_date else None,
         entry_price=signal.entry_price,
         current_price=current_price,
-        current_price_date=latest.date.isoformat() if latest else None,
+        current_price_date=latest_date.isoformat() if latest_date else None,
         exit_date=signal.exit_date.isoformat() if signal.exit_date else None,
         exit_price=signal.exit_price,
         holding_period_days=signal.holding_period_days,
@@ -117,14 +111,17 @@ def open_signals(session: Session) -> list[SignalView]:
     rows = session.scalars(
         select(Signal).where(Signal.status == OPEN).order_by(Signal.trigger_date.desc())
     ).all()
-    return [_build(session, s) for s in rows]
+    context = market_context.load(session, {s.symbol for s in rows})
+    return [_build(session, s, context) for s in rows]
 
 
-def closed_signals(session: Session) -> list[SignalView]:
-    rows = session.scalars(
-        select(Signal).where(Signal.status == CLOSED).order_by(Signal.exit_date.desc())
-    ).all()
-    return [_build(session, s) for s in rows]
+def closed_signals(session: Session, limit: int | None = None) -> list[SignalView]:
+    query = select(Signal).where(Signal.status == CLOSED).order_by(Signal.exit_date.desc())
+    if limit is not None:
+        query = query.limit(limit)
+    rows = session.scalars(query).all()
+    context = market_context.load(session, {s.symbol for s in rows})
+    return [_build(session, s, context) for s in rows]
 
 
 def earnings_events(session: Session, limit: int = 200) -> list[dict]:

@@ -13,8 +13,18 @@
   </p>
 </section>
 
+<div class="toolbar">
+  <label class="filter">
+    <span class="visually-hidden">Titel filtern</span>
+    <input type="search" placeholder="Filtern nach Symbol, Firma oder Branche …"
+           data-filter="#titel-tabelle" data-filter-status="#titel-anzahl"
+           autocomplete="off">
+  </label>
+  <span class="runinfo" id="titel-anzahl"></span>
+</div>
+
 <div class="scroll">
-  <table>
+  <table id="titel-tabelle" data-sortable>
     <thead>
       <tr>
         <th><span>Symbol</span></th>
@@ -29,7 +39,7 @@
         <td class="sym"><a href="/titel/{{ t.symbol }}">{{ t.symbol }}</a>
           {% if t.company %}<span class="company">{{ t.company }}</span>{% endif %}
         </td>
-        <td>
+        <td data-sort="{{ t.signal_type or 'zz' }}">
           {% if t.signal_type %}
             <span class="tag {{ 'buy' if t.signal_type == 'BUY' else 'sell' }}">{{ t.signal_type }}</span>
             {% if t.days_remaining is not none %}<span class="muted"> noch {{ t.days_remaining }} HT</span>{% endif %}
@@ -37,8 +47,8 @@
             <span class="muted">kein Signal</span>
           {% endif %}
         </td>
-        <td class="num">{{ t.last_close|num }}</td>
-        <td>
+        <td class="num" data-sort="{{ t.last_close or 0 }}">{{ t.last_close|num }}</td>
+        <td data-sort="{{ t.next_earnings_date or '9999-99-99' }}">
           {% if t.next_earnings_date %}
             {{ t.next_earnings_date|datefmt }}
             {% if t.days_to_earnings is not none and t.days_to_earnings >= 0 %}

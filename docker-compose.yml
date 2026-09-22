@@ -16,6 +16,10 @@ services:
       RUN_ON_STARTUP: ${RUN_ON_STARTUP:-false}
       APP_UID: ${APP_UID:-1000}
       APP_GID: ${APP_GID:-1000}
+      # Die Anwendung muss wissen, ob ihr Port im Netz haengt - und wen sie
+      # durchlassen darf.
+      BIND_ADDR: ${BIND_ADDR:-127.0.0.1}
+      ALLOWED_IPS: ${ALLOWED_IPS:-}
     ports:
       # Standardmaessig NUR auf dem Loopback des Servers. Die Anwendung hat
       # keine Authentifizierung - Zugriff von aussen ueber SSH-Tunnel:

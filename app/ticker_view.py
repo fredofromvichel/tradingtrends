@@ -20,6 +20,7 @@ from app.indicators import PriceContext, PricePoint, compute_context
 from app.models import AnalystRecommendation, EarningsEvent, Price, Signal, Ticker
 from app.research import ResearchLink, build_research_links
 from app.signals import OPEN, trading_days_elapsed
+from app import market_context
 from app.views import SignalView, _build
 
 # Wie viele Handelstage das Diagramm zeichnet (rund ein Jahr).
@@ -75,6 +76,11 @@ class TickerDetail:
     analysts: AnalystView | None
     analyst_history: list[AnalystView]
     research: list[ResearchLink]
+    # Blaettern ohne Umweg ueber die Liste.
+    prev_symbol: str | None = None
+    next_symbol: str | None = None
+    position: int = 0
+    total: int = 0
 
 
 def _price_points(session: Session, symbol: str, limit: int = CONTEXT_BARS) -> list[PricePoint]:
@@ -196,11 +202,25 @@ def ticker_detail(session: Session, settings: Settings, symbol: str) -> TickerDe
     if ticker is None:
         return None
 
+    # Reihenfolge wie in der Uebersicht, damit Blaettern und Liste
+    # dieselbe Abfolge haben.
+    alle = list(
+        session.scalars(
+            select(Ticker.symbol).where(Ticker.active.is_(True)).order_by(Ticker.symbol)
+        ).all()
+    )
+    index = alle.index(ticker.symbol) if ticker.symbol in alle else -1
+    prev_symbol = alle[index - 1] if index > 0 else (alle[-1] if index == 0 else None)
+    next_symbol = (
+        alle[index + 1] if 0 <= index < len(alle) - 1 else (alle[0] if index >= 0 else None)
+    )
+
     signals = session.scalars(
         select(Signal).where(Signal.symbol == ticker.symbol).order_by(Signal.trigger_date.desc())
     ).all()
-    open_signals = [_build(session, s) for s in signals if s.status == OPEN]
-    closed_signals = [_build(session, s) for s in signals if s.status != OPEN]
+    context = market_context.load(session, {s.symbol for s in signals} | {ticker.symbol})
+    open_signals = [_build(session, s, context) for s in signals if s.status == OPEN]
+    closed_signals = [_build(session, s, context) for s in signals if s.status != OPEN]
 
     event_rows = session.scalars(
         select(EarningsEvent)
@@ -268,6 +288,10 @@ def ticker_detail(session: Session, settings: Settings, symbol: str) -> TickerDe
         days_to_earnings=days_to_earnings,
         analysts=analyst_history[0] if analyst_history else None,
         analyst_history=analyst_history,
+        prev_symbol=prev_symbol,
+        next_symbol=next_symbol,
+        position=index + 1 if index >= 0 else 0,
+        total=len(alle),
         research=build_research_links(
             ticker.symbol,
             ticker.name,
@@ -288,31 +312,27 @@ def ticker_overview(session: Session, settings: Settings) -> list[dict]:
     rows = session.scalars(
         select(Ticker).where(Ticker.active.is_(True)).order_by(Ticker.symbol)
     ).all()
+    open_by_symbol = {
+        s.symbol: s
+        for s in session.scalars(select(Signal).where(Signal.status == OPEN)).all()
+    }
+    # Die volle Kursreihe braucht nur, wer eine Restlaufzeit ausrechnet.
+    context = market_context.quotes(session, [t.symbol for t in rows])
+    market_context.series(session, [s for s in open_by_symbol if s in
+                                    {t.symbol for t in rows}])
+
     out: list[dict] = []
     today = dt.date.today()
     for ticker in rows:
-        open_signal = session.scalar(
-            select(Signal).where(Signal.symbol == ticker.symbol, Signal.status == OPEN)
-        )
-        latest_price = session.scalar(
-            select(Price)
-            .where(Price.symbol == ticker.symbol)
-            .order_by(Price.date.desc())
-            .limit(1)
-        )
+        open_signal = open_by_symbol.get(ticker.symbol)
         remaining = None
         if open_signal is not None and open_signal.entry_date is not None:
-            dates = list(
-                session.scalars(
-                    select(Price.date)
-                    .where(Price.symbol == ticker.symbol)
-                    .order_by(Price.date)
-                ).all()
-            )
             remaining = max(
                 0,
                 open_signal.holding_period_days
-                - trading_days_elapsed(dates, open_signal.entry_date),
+                - trading_days_elapsed(
+                    context.dates(ticker.symbol), open_signal.entry_date
+                ),
             )
         out.append(
             {
@@ -321,7 +341,7 @@ def ticker_overview(session: Session, settings: Settings) -> list[dict]:
                 "industry": ticker.industry,
                 "signal_type": open_signal.signal_type if open_signal else None,
                 "days_remaining": remaining,
-                "last_close": latest_price.close if latest_price else None,
+                "last_close": context.close(ticker.symbol),
                 "next_earnings_date": (
                     ticker.next_earnings_date.isoformat()
                     if ticker.next_earnings_date

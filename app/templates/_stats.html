@@ -36,7 +36,7 @@
           <span class="unreliable">n = {{ summary.closed_count }}</span>
         {% endif %}
         {% if summary.closed_count %}
-          <small>95 %: {{ summary.win_rate_low|rate }} bis {{ summary.win_rate_high|rate }}</small>
+          <small>95 %: {{ summary.win_rate_low|ratebare }} bis {{ summary.win_rate_high|rate }}</small>
         {% endif %}
       </dd>
     </div>
