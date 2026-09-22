@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from app import ticker_view, views
+from app import momentum_view, ticker_view, views
 from app.config import Settings, load_settings
 from app.db import get_sessionmaker, init_engine, session_scope, sync_tickers
 from app.logging_conf import configure_logging
@@ -80,7 +80,13 @@ app = FastAPI(title="PEAD-Signal-POC", version="1.0.0", lifespan=lifespan)
 
 
 def _fmt_pct(value: float | None, digits: int = 2) -> str:
-    return "–" if value is None else f"{value * 100:+.{digits}f} %"
+    if value is None:
+        return "–"
+    scaled = value * 100
+    # Runden vor dem Formatieren, sonst wird aus -0.0001 ein "-0.00 %".
+    if round(scaled, digits) == 0:
+        scaled = 0.0
+    return f"{scaled:+.{digits}f} %"
 
 
 def _fmt_rate(value: float | None, digits: int = 0) -> str:
@@ -201,8 +207,29 @@ def ticker_page(
         name="ticker.html",
         context={
             "d": detail,
+            "momentum": momentum_view.for_symbol(session, detail.symbol),
+            "momentum_scores": momentum_view.current_scores(session, settings),
             "last_run": views.last_run(session),
             "summary": views.summary(session),
+            "settings": settings,
+        },
+    )
+
+
+@app.get("/momentum", response_class=None)
+def momentum_page(request: Request, session: Session = Depends(get_session)):
+    settings = get_settings()
+    return templates.TemplateResponse(
+        request=request,
+        name="momentum.html",
+        context={
+            "open_positions": momentum_view.open_positions(session),
+            "closed_positions": momentum_view.closed_positions(session),
+            "scores": momentum_view.current_scores(session, settings),
+            "readiness": momentum_view.readiness(session, settings),
+            "summary": momentum_view.summary(session),
+            "last_rebalance": momentum_view.last_rebalance(session),
+            "last_run": views.last_run(session),
             "settings": settings,
         },
     )
@@ -247,6 +274,25 @@ def api_events(
 @app.get("/api/tickers")
 def api_tickers(session: Session = Depends(get_session)):
     return JSONResponse(ticker_view.ticker_overview(session, get_settings()))
+
+
+@app.get("/api/momentum")
+def api_momentum(
+    status: str | None = Query(default=None, pattern="^(open|closed)$"),
+    session: Session = Depends(get_session),
+):
+    if status == "open":
+        data = momentum_view.open_positions(session)
+    elif status == "closed":
+        data = momentum_view.closed_positions(session)
+    else:
+        data = momentum_view.open_positions(session) + momentum_view.closed_positions(session)
+    return JSONResponse(
+        {
+            "positions": [m.to_dict() for m in data],
+            "summary": momentum_view.summary(session),
+        }
+    )
 
 
 @app.get("/api/summary")

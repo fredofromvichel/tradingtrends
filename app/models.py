@@ -124,6 +124,58 @@ class AnalystRecommendation(Base):
     fetched_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
 
 
+class MomentumRebalance(Base):
+    """Eine Umschichtung des Momentum-Korbs."""
+
+    __tablename__ = "momentum_rebalances"
+    __table_args__ = (
+        UniqueConstraint("period_key", name="uq_rebalance_period"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # Periodenschluessel, z. B. "2026-09" - macht den Lauf idempotent.
+    period_key: Mapped[str] = mapped_column(String(16), nullable=False)
+    rebalance_date: Mapped[dt.date] = mapped_column(Date, nullable=False, index=True)
+    formation_start: Mapped[dt.date | None] = mapped_column(Date, default=None)
+    formation_end: Mapped[dt.date | None] = mapped_column(Date, default=None)
+    universe_size: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    group_size: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    lookback_days: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    skip_days: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+
+
+class MomentumSignal(Base):
+    """Eine Position aus dem Momentum-Korb.
+
+    Bewusst eine eigene Tabelle neben `signals`: die beiden Quellen werden
+    getrennt ausgewiesen, damit bei einem Ergebnis immer klar ist, welche
+    Logik es getragen hat.
+    """
+
+    __tablename__ = "momentum_signals"
+    __table_args__ = (
+        UniqueConstraint("rebalance_id", "symbol", name="uq_momentum_rebalance_symbol"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(ForeignKey("tickers.symbol"), index=True, nullable=False)
+    rebalance_id: Mapped[int] = mapped_column(
+        ForeignKey("momentum_rebalances.id"), nullable=False, index=True
+    )
+    direction: Mapped[str] = mapped_column(String(5), nullable=False)  # LONG | SHORT
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    momentum_score: Mapped[float] = mapped_column(Float, nullable=False)
+    entry_date: Mapped[dt.date | None] = mapped_column(Date, default=None)
+    entry_price: Mapped[float | None] = mapped_column(Float, default=None)
+    holding_period_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    exit_date: Mapped[dt.date | None] = mapped_column(Date, default=None)
+    exit_price: Mapped[float | None] = mapped_column(Float, default=None)
+    status: Mapped[str] = mapped_column(String(8), default="OPEN", nullable=False, index=True)
+    return_pct: Mapped[float | None] = mapped_column(Float, default=None)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+
+
 class PipelineRun(Base):
     """Protokoll der Pipeline-Laeufe - Grundlage der Statusanzeige im Frontend."""
 
@@ -138,4 +190,6 @@ class PipelineRun(Base):
     prices_ingested: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     signals_opened: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     signals_closed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    momentum_opened: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    momentum_closed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     message: Mapped[str | None] = mapped_column(String(2000), default=None)

@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy import select
 
 import app.db as db_module
-from app.config import Schedule, Settings
+from app.config import Momentum, Schedule, Settings
 from app.db import init_engine, session_scope
 from app.models import EarningsEvent, Price, Signal
 from app.sources.finnhub_client import CompanyProfile, RawEarnings
@@ -76,6 +76,10 @@ def settings(tmp_path: Path) -> Settings:
         price_refresh_days=7,
         min_history_for_sue=4,
         schedule=Schedule(enabled=False),
+        # Diese Datei prueft die PEAD-Kette. Momentum braucht ein Universum
+        # von mindestens acht Titeln und wird in tests/test_momentum_pipeline.py
+        # gesondert geprueft.
+        momentum=Momentum(enabled=False),
     )
 
 

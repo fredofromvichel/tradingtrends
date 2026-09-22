@@ -79,6 +79,7 @@ Authentifizierung davor (Reverse-Proxy mit Basic-Auth o. ä.). Erst dann in der
 | `/history` | Geschlossene Signale mit realisierter Rendite |
 | `/titel` | Tagesstatus aller beobachteten Titel |
 | `/titel/<SYMBOL>` | Steckbrief: PEAD-Status, Kursverlauf, Kennzahlen, Termin, Analysten, Recherche-Links |
+| `/momentum` | Zweite Signalquelle: Rangfolge, aktueller Korb, Kennzahlen |
 | `/events` | Erfasste Earnings-Events (Rohdaten-Kontrolle) |
 | `/docs` | Interaktive OpenAPI-Dokumentation |
 
@@ -94,6 +95,7 @@ Mouseover auf einem Symbol zeigt Firmenname, Branche und Börse.
 | `GET` | `/api/signals?status=open\|closed` | Signale, ohne Parameter alle |
 | `GET` | `/api/earnings-events?limit=200` | Erfasste Earnings-Events |
 | `GET` | `/api/tickers` | Tagesstatus aller Titel |
+| `GET` | `/api/momentum?status=open\|closed` | Momentum-Positionen und Kennzahlen |
 | `GET` | `/api/summary` | Kennzahlen |
 | `GET` | `/healthz` | Healthcheck |
 | `POST` | `/run-now` | Pipeline-Lauf, danach Redirect auf `/` |
@@ -107,6 +109,7 @@ make help       # alle Kurzbefehle
 make check      # Konfiguration, Finnhub und yfinance prüfen  <- erster Schritt bei Problemen
 make run        # Pipeline-Lauf sofort ausführen
 make seed       # letzte Berichtssaison einmalig nachladen (DAYS=150)
+make backfill   # Kurshistorie nachladen (nötig für Momentum)
 make logs       # Logs verfolgen
 make status     # Bestand zusammenfassen
 make up         # nach Änderung an .env  (ersetzt den Container)
@@ -257,6 +260,71 @@ werden je Gruppe die ersten 14 verwendet.
 
 ---
 
+## Zweite Signalquelle: Momentum
+
+Neben PEAD läuft **Cross-Sectional-Momentum** (Jegadeesh/Titman) — getrennt
+geführt, mit eigenen Tabellen, eigener Seite und eigener Statistik. Die beiden
+Quellen werden **nie zu einer Zahl verrechnet**: sonst wäre bei einem Ergebnis
+nie klar, welche Logik es getragen hat.
+
+**So funktioniert es.** Alle Titel werden nach ihrer Rendite der letzten zwölf
+Monate rangiert — der jüngste Monat bleibt dabei ausgespart. Das ist kein
+Schönheitsfehler, sondern Absicht: auf sehr kurze Sicht neigen Kurse zur
+Umkehr, was den Effekt sonst auffrisst. Die Spitzengruppe wird gekauft, die
+Schlussgruppe leerverkauft. Umgeschichtet wird beim ersten Pipeline-Lauf eines
+Monats.
+
+**Zwei Unterschiede zu PEAD, die man kennen muss:**
+
+- **Momentum ist relativ.** Ein Titel ist nicht „gut", sondern besser als die
+  anderen im Universum. In einem fallenden Markt besteht die Long-Gruppe
+  komplett aus Verlierern, die nur weniger verloren haben. Ein Momentum von
+  −6 % kann Rang 3 bedeuten.
+- **Momentum ist kalendergetrieben.** Es äußert sich jeden Monat, nicht nur
+  nach einem Ereignis. Anders als bei PEAD ist „keine Aussage" hier die
+  Ausnahme.
+
+> **Einschränkung, die hier schwerer wiegt als bei PEAD.** Der dokumentierte
+> Faktor rangiert über Hunderte bis Tausende Aktien. Bei 20 US-Large-Caps aus
+> wenigen Branchen misst die Rangfolge überwiegend **Branchenrotation** — wenn
+> Halbleiter laufen und Konsumgüter nicht, landen die einen oben und die
+> anderen unten, ohne dass das etwas mit dem Faktor zu tun hätte. Die Zahlen
+> prüfen die Mechanik; sie belegen den Faktor nicht.
+
+### Voraussetzung: Kurshistorie
+
+Das Formationsfenster braucht **253 Kurstage je Titel** (252 Handelstage
+Rückblick plus einen). Deshalb steht `price_backfill_days` auf 450 — die
+Konfiguration wird beim Start dagegen geprüft und der Container verweigert den
+Start mit konkreter Meldung, wenn der Wert nicht reicht.
+
+Wer aus einer älteren Version kommt, lädt die Historie einmalig nach:
+
+```bash
+make backfill
+```
+
+Die `/momentum`-Seite sagt von sich aus, wenn die Historie nicht reicht:
+wie viele Kurstage nötig sind, wie viele Titel bereits versorgt sind und
+welche am kürzesten sind.
+
+### Parameter
+
+| Parameter | Default | Bedeutung |
+|---|---|---|
+| `momentum.enabled` | `true` | Ganz abschaltbar |
+| `momentum.lookback_days` | `252` | Formationsfenster in Handelstagen (~12 Monate) |
+| `momentum.skip_days` | `21` | Ausgesparte jüngste Handelstage |
+| `momentum.group_fraction` | `0.3` | Anteil je Gruppe (0.3 = Terzile, 0.2 = Quintile) |
+| `momentum.holding_period_days` | `21` | Haltedauer bis zur Umschichtung |
+| `momentum.min_universe` | `8` | Darunter wird nicht rangiert |
+| `momentum.rebalance` | `monthly` | Erster Lauf des Monats schichtet um |
+
+Die Umschichtung ist über einen Periodenschlüssel (`2026-09`) idempotent —
+mehrere Läufe im selben Monat erzeugen keinen zweiten Korb.
+
+---
+
 ## Kennzahlen und ihre Unsicherheit
 
 Die Startseite zeigt Trefferquote und mittlere Rendite **erst ab 20
@@ -307,9 +375,9 @@ kosmetisch:
   und genau deshalb implementiert diese Anwendung PEAD und nicht „der Kurs hat
   den 50-Tage-Schnitt gekreuzt".
 
-Wer eine zweite Signalquelle will, sollte deshalb bei den dokumentierten
-Faktoren ansetzen und sie **getrennt** ausweisen, nicht mit PEAD zu einer Zahl
-verrühren.
+Genau deshalb ist die zweite Signalquelle in dieser Anwendung Momentum und
+nicht „der Kurs hat den 50-Tage-Schnitt gekreuzt" — und genau deshalb steht sie
+getrennt (siehe oben).
 
 ---
 
@@ -339,6 +407,9 @@ oder von der CLI ausgelöst:
 6. **Offene Positionen prüfen** — sind `holding_period_days` Handelstage seit dem
    Einstieg vergangen, wird geschlossen und `return_pct` berechnet. Fehlt der
    Einstiegskurs noch, wird er hier nachgetragen.
+7. **Momentum** — fällige Momentum-Positionen schließen und, falls in diesem
+   Monat noch nicht geschehen, den Korb neu zusammenstellen. Läuft nur bei
+   `momentum.enabled: true` und berührt die PEAD-Tabellen nicht.
 
 Schritt 5 läuft vor Schritt 6. Im Tagesbetrieb ändert die Reihenfolge nichts —
 ein heute eröffnetes Signal kann heute nicht fällig sein. Beim Nachladen alter
@@ -396,7 +467,9 @@ app/
 ├── config.py            config.yaml + Env, mit Validierung
 ├── models.py            SQLAlchemy-Modelle
 ├── db.py                Engine, Session, Ticker-Abgleich
-├── signals.py           Signal-Logik (netz- und DB-frei, voll getestet)
+├── signals.py           PEAD-Signal-Logik (netz- und DB-frei, voll getestet)
+├── momentum.py          Momentum-Logik: Score, Rangfolge, Gruppenbildung
+├── momentum_view.py     Aufbereitung der Momentum-Seite
 ├── stats.py             Konfidenzintervalle, Sperre kleiner Stichproben
 ├── indicators.py        beschreibende Kurskennzahlen (keine Prognose)
 ├── charting.py          Diagrammgeometrie (reine Rechnung, kein Rendering)
@@ -417,6 +490,8 @@ app/
 |---|---|---|
 | `tickers` | `symbol` | Beobachtete Titel, `active` statt Löschen, Firmenname/Branche/Börse, nächster Meldetermin |
 | `analyst_recommendations` | `id`, unique `(symbol, period)` | Verteilung Kaufen/Halten/Verkaufen je Monat |
+| `momentum_rebalances` | `id`, unique `period_key` | Eine Umschichtung: Formationsfenster, Universumsgröße |
+| `momentum_signals` | `id`, unique `(rebalance_id, symbol)` | Position aus dem Korb, getrennt von `signals` |
 | `earnings_events` | `id`, unique `(symbol, report_date)` | EPS, `surprise_pct`, `sue`, `report_hour`, `processed` |
 | `prices` | `(symbol, date)` | Tages-OHLCV, bereinigt |
 | `signals` | `id`, unique `earnings_event_id` | Ein- und Ausstieg, Status, `return_pct` |
@@ -430,7 +505,7 @@ app/
 make test
 ```
 
-107 Tests, ohne Netzzugriff:
+139 Tests, ohne Netzzugriff:
 
 * `tests/test_signals.py` — Surprise, SUE, Schwellenwerte, Short-Rendite,
   Handelstags-Arithmetik über Wochenenden, Einstiegstag je Meldezeitpunkt.
@@ -449,6 +524,9 @@ make test
 | `make check` meldet `/calendar/earnings` nicht verfügbar | Endpunkt im Tarif gesperrt. Die Pipeline weicht auf die Fiskalperiode aus — das Meldedatum ist dann eine Näherung. |
 | Lauf endet `PARTIAL` | Eine Quelle ist ausgefallen, die andere lief durch. Ursache im Footer und in `make logs`. |
 | Grünes Banner „Lauf abgeschlossen", aber die Seite bleibt leer | Normal, kein Fehler. Es entstehen nur Signale, wenn im Rückblickfenster von 3 Tagen gemeldet **und** die Schwelle überschritten wurde. Außerhalb der Berichtssaison passiert beides nicht. `make status` zeigt `events_count`, `/events` die Rohdaten. Mit `make seed` die letzte Saison nachholen. |
+| `/momentum` sagt „Noch keine Rangfolge möglich" | Die Kurshistorie reicht für das Formationsfenster nicht. `make backfill` lädt sie nach. Bleibt es dabei, ist `price_backfill_days` zu klein oder Yahoo liefert für die Symbole keine so lange Historie. |
+| Momentum-Korb enthält nur Verlierer | Kein Fehler, sondern die Natur eines relativen Signals: in einem fallenden Markt besteht die Spitzengruppe aus den kleinsten Verlusten. |
+| Lauf endet `PARTIAL` mit Momentum-Meldung | Der Korb konnte nicht gebildet werden, meist zu kurze Historie. PEAD läuft davon unberührt weiter. |
 | Steckbrief zeigt „Keine Aussage möglich" | Kein Fehler. Außerhalb des Drift-Fensters nach einer Gewinnüberraschung hat die PEAD-Logik zu einem Titel nichts zu sagen. Der Termin der nächsten Zahlen steht auf derselben Seite. |
 | Kein Analystenbild, kein nächster Termin | `/stock/recommendation` bzw. `/calendar/earnings` sind im Tarif gesperrt oder liefern für diesen Titel nichts. `make check` zeigt den Kalender; die Seite blendet den Block dann aus. |
 | Recherche-Links treffen das Falsche | Begriffe in `config.yaml` unter `research:` anpassen, `make restart`. Häufigste Ursachen: fehlende Branchenübersetzung (die englische Bezeichnung wird dann roh gesucht) oder ein zu generischer Firmenname. |

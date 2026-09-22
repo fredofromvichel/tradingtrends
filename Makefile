@@ -1,7 +1,7 @@
 # Bequeme Kurzbefehle. Alles laesst sich auch direkt mit `docker compose` tun.
 COMPOSE ?= docker compose
 
-.PHONY: help setup up down restart rebuild logs check run seed status shell test reset env
+.PHONY: help setup up down restart rebuild logs check run seed backfill status shell test reset env
 
 help:
 	@echo "make setup    - Erstmalige Einrichtung (Docker pruefen, .env, Start)"
@@ -14,6 +14,7 @@ help:
 	@echo "make check    - Konfiguration, Finnhub und yfinance pruefen"
 	@echo "make run      - Pipeline-Lauf sofort ausfuehren"
 	@echo "make seed     - Letzte Berichtssaison einmalig nachladen (DAYS=150)"
+	@echo "make backfill - Kurshistorie nachladen (noetig fuer Momentum)"
 	@echo "make status   - Bestand zusammenfassen"
 	@echo "make test     - Testsuite im Container ausfuehren"
 	@echo "make shell    - Shell im Container"
@@ -56,6 +57,11 @@ run:
 DAYS ?= 150
 seed:
 	$(COMPOSE) exec -u app app python -m app.cli seed --days $(DAYS)
+
+# Nach einer Erhoehung von price_backfill_days - der Tageslauf holt sonst nur
+# das kurze Aktualisierungsfenster.
+backfill:
+	$(COMPOSE) exec -u app app python -m app.cli backfill
 
 status:
 	$(COMPOSE) exec -u app app python -m app.cli status

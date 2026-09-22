@@ -56,8 +56,10 @@ holding_period_days: 20
 lookback_days_earnings: 3
 
 # Kurshistorie beim allerersten Lauf (Kalendertage). Muss die laengste
-# erwartete Haltedauer deutlich ueberdecken.
-price_backfill_days: 180
+# erwartete Haltedauer deutlich ueberdecken - und, wenn Momentum aktiv ist,
+# dessen Formationsfenster von rund zwoelf Monaten. Die Konfiguration wird
+# beim Start dagegen geprueft.
+price_backfill_days: 450
 
 # Kursfenster bei jedem weiteren Lauf (Kalendertage).
 price_refresh_days: 7
@@ -74,6 +76,40 @@ schedule:
   # 22:30 Europe/Berlin = nach US-Boersenschluss.
   cron: "30 22 * * 1-5"
   timezone: "Europe/Berlin"
+
+# ===========================================================================
+# Zweite Signalquelle: Cross-Sectional-Momentum
+#
+# Getrennt von PEAD gefuehrt - eigene Tabellen, eigene Seite, eigene Statistik.
+# Niemals zu einer Zahl verrechnet: sonst waere bei einem Ergebnis nie klar,
+# welche Logik es getragen hat.
+#
+# WICHTIG: Der dokumentierte Faktor rangiert ueber Hunderte bis Tausende
+# Aktien. Bei 20 US-Large-Caps aus wenigen Branchen misst die Rangfolge
+# ueberwiegend Branchenrotation. Die Ergebnisse taugen zur Pruefung der
+# Mechanik, nicht als Beleg fuer den Faktor.
+# ===========================================================================
+momentum:
+  enabled: true
+
+  # Formationsfenster in HANDELSTAGEN. 252 ~ zwoelf Monate.
+  lookback_days: 252
+
+  # Juengste Handelstage, die ausgelassen werden. Nicht optional: auf sehr
+  # kurze Sicht neigen Kurse zur Umkehr, was den Effekt sonst auffrisst.
+  skip_days: 21
+
+  # Anteil des Universums je Gruppe. 0.3 = Terzile, 0.2 = Quintile.
+  group_fraction: 0.3
+
+  # Haltedauer in Handelstagen bis zur naechsten Umschichtung.
+  holding_period_days: 21
+
+  # Unterhalb dieser Anzahl bewertbarer Titel wird nicht rangiert.
+  min_universe: 8
+
+  # Aktuell nur "monthly": umgeschichtet wird beim ersten Lauf eines Monats.
+  rebalance: monthly
 
 # ---------------------------------------------------------------------------
 # Recherche-Links auf der Titel-Detailseite

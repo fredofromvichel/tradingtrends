@@ -23,6 +23,19 @@ class Schedule:
 
 
 @dataclass(frozen=True)
+class Momentum:
+    """Parameter der zweiten Signalquelle. Getrennt von den PEAD-Schwellen."""
+
+    enabled: bool = True
+    lookback_days: int = 252     # Formationsfenster in Handelstagen (~12 Monate)
+    skip_days: int = 21          # juengster Monat wird ausgelassen
+    group_fraction: float = 0.3  # Anteil je Gruppe (0.3 == Terzile)
+    holding_period_days: int = 21
+    min_universe: int = 8
+    rebalance: str = "monthly"   # aktuell nur "monthly"
+
+
+@dataclass(frozen=True)
 class Research:
     """Begriffe und Zeitfenster der Recherche-Links."""
 
@@ -57,6 +70,7 @@ class Settings:
     outlook_max_age_days: int = 3
     schedule: Schedule = field(default_factory=Schedule)
     research: Research = field(default_factory=Research)
+    momentum: Momentum = field(default_factory=Momentum)
 
 
 def _as_bool(value: str | None, default: bool = False) -> bool:
@@ -118,6 +132,19 @@ def load_settings(path: Path | None = None) -> Settings:
         },
     )
 
+    momentum_raw = raw.get("momentum") or {}
+    if not isinstance(momentum_raw, dict):
+        raise ConfigError("Der Abschnitt 'momentum' in config.yaml ist kein Mapping.")
+    momentum = Momentum(
+        enabled=bool(momentum_raw.get("enabled", True)),
+        lookback_days=int(momentum_raw.get("lookback_days", 252)),
+        skip_days=int(momentum_raw.get("skip_days", 21)),
+        group_fraction=float(momentum_raw.get("group_fraction", 0.3)),
+        holding_period_days=int(momentum_raw.get("holding_period_days", 21)),
+        min_universe=int(momentum_raw.get("min_universe", 8)),
+        rebalance=str(momentum_raw.get("rebalance", "monthly")),
+    )
+
     settings = Settings(
         tickers=tuple(tickers),
         finnhub_api_key=api_key,
@@ -137,6 +164,7 @@ def load_settings(path: Path | None = None) -> Settings:
         outlook_max_age_days=int(raw.get("outlook_max_age_days", 3)),
         schedule=schedule,
         research=research,
+        momentum=momentum,
     )
     _validate(settings)
     return settings
@@ -167,3 +195,40 @@ def _validate(s: Settings) -> None:
             "price_backfill_days ist zu klein: die Kurshistorie muss die Haltedauer "
             "deutlich ueberdecken."
         )
+
+    m = s.momentum
+    if m.enabled:
+        if m.skip_days >= m.lookback_days:
+            raise ConfigError(
+                "momentum.skip_days muss kleiner als momentum.lookback_days sein."
+            )
+        if m.lookback_days < 2:
+            raise ConfigError("momentum.lookback_days muss mindestens 2 sein.")
+        if not 0 < m.group_fraction < 0.5:
+            raise ConfigError(
+                "momentum.group_fraction muss zwischen 0 und 0.5 liegen - bei 0.5 "
+                "waeren Spitze und Schluss dasselbe."
+            )
+        if m.holding_period_days < 1:
+            raise ConfigError("momentum.holding_period_days muss mindestens 1 sein.")
+        if m.min_universe < 4:
+            raise ConfigError(
+                "momentum.min_universe muss mindestens 4 sein - darunter besteht "
+                "jede Gruppe aus einem einzigen Titel."
+            )
+        if len(s.tickers) < m.min_universe:
+            raise ConfigError(
+                f"momentum ist aktiv, aber es sind nur {len(s.tickers)} Ticker "
+                f"konfiguriert (mindestens {m.min_universe} noetig). Entweder mehr "
+                "Titel eintragen oder momentum.enabled auf false setzen."
+            )
+        # Formationsfenster in Kalendertage umrechnen: rund 1.45 Kalendertage
+        # je Handelstag, plus Puffer.
+        needed = int((m.lookback_days + m.holding_period_days) * 1.45) + 30
+        if s.price_backfill_days < needed:
+            raise ConfigError(
+                f"price_backfill_days ({s.price_backfill_days}) reicht fuer das "
+                f"Momentum-Formationsfenster nicht aus - noetig sind etwa {needed} "
+                "Kalendertage. Wert erhoehen und 'make backfill' ausfuehren, oder "
+                "momentum.enabled auf false setzen."
+            )

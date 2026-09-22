@@ -3,7 +3,8 @@
     docker compose exec -u app app python -m app.cli run    # Pipeline-Lauf
     docker compose exec -u app app python -m app.cli check  # Konfiguration + Quellen
     docker compose exec -u app app python -m app.cli status # Bestand zusammenfassen
-    docker compose exec -u app app python -m app.cli seed --days 150   # Saison nachholen
+    docker compose exec -u app app python -m app.cli seed --days 150  # Saison nachholen
+    docker compose exec -u app app python -m app.cli backfill        # Kurshistorie
 """
 
 from __future__ import annotations
@@ -16,7 +17,9 @@ import sys
 from app.config import ConfigError, load_settings
 from app.db import init_engine, session_scope, sync_tickers
 from app.logging_conf import configure_logging
-from app.pipeline import run_daily
+from app.momentum import required_history
+from app.momentum_view import readiness
+from app.pipeline import RunResult, _ingest_prices, run_daily
 from app.sources.finnhub_client import (
     FinnhubClient,
     FinnhubError,
@@ -169,6 +172,44 @@ def cmd_seed(args) -> int:
     return 0
 
 
+def cmd_backfill(_args) -> int:
+    """Kurshistorie ueber das volle price_backfill_days-Fenster nachladen.
+
+    Noetig, wenn price_backfill_days nachtraeglich erhoeht wurde - etwa weil
+    Momentum ein Formationsfenster von rund zwoelf Monaten braucht. Der
+    normale Tageslauf holt nur das kurze Aktualisierungsfenster.
+    """
+    settings = _prepare()
+    print(f"Lade Kurshistorie der letzten {settings.price_backfill_days} Kalendertage "
+          f"fuer {len(settings.tickers)} Ticker ...")
+
+    result = RunResult(trigger="backfill", started_at=dt.datetime.now(dt.timezone.utc))
+    try:
+        _ingest_prices(settings, result, force_backfill=True)
+    except Exception as exc:
+        print(f"Fehlgeschlagen: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"{result.prices_ingested} neue von {result.prices_fetched} abgerufenen "
+          "Kurszeilen geschrieben.")
+
+    if settings.momentum.enabled:
+        needed = required_history(settings.momentum.lookback_days)
+        with session_scope() as session:
+            ready = readiness(session, settings)
+        print(
+            f"Momentum: {ready['ready_count']} von {ready['universe_size']} Titeln haben "
+            f"die noetigen {needed} Kurstage (laengster Verlauf: {ready['max_available']})."
+        )
+        if not ready["sufficient"]:
+            print("")
+            print("Noch nicht genug fuer eine Rangfolge. Moegliche Ursachen:")
+            print("  - price_backfill_days in config.yaml zu klein.")
+            print("  - Der Titel ist noch nicht lange genug an der Boerse.")
+            print("  - Yahoo liefert fuer das Symbol keine so lange Historie.")
+    return 0
+
+
 def cmd_status(_args) -> int:
     _prepare()
     with session_scope() as session:
@@ -197,6 +238,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Wie viele Kalendertage zurueck Earnings gesucht werden (Default: 150)",
     )
     seed.set_defaults(func=cmd_seed)
+    sub.add_parser(
+        "backfill",
+        help="Kurshistorie ueber das volle price_backfill_days-Fenster nachladen",
+    ).set_defaults(func=cmd_backfill)
     args = parser.parse_args(argv)
     try:
         return args.func(args)

@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+{% set active = 'momentum' %}
+{% block title %}Momentum · PEAD-Signal-POC{% endblock %}
+
+{% block content %}
+
+<div class="callout">
+  <span class="label">Zweite Signalquelle, getrennt geführt</span>
+  Cross-Sectional-Momentum rangiert die Titel <strong>gegeneinander</strong>: gekauft wird
+  die Spitzengruppe der letzten {{ (settings.momentum.lookback_days / 21)|round|int }} Monate
+  (ohne den jüngsten Monat), leerverkauft die Schlussgruppe. Die Zahlen werden
+  <strong>nie</strong> mit PEAD verrechnet — sonst wäre bei einem Ergebnis nie klar, welche
+  Logik es getragen hat.
+  <br><br>
+  <strong>Einschränkung, die hier schwerer wiegt als bei PEAD:</strong> der dokumentierte
+  Faktor rangiert über Hunderte bis Tausende Aktien. Bei {{ readiness.universe_size }} Titeln
+  aus wenigen Branchen misst die Rangfolge überwiegend Branchenrotation. Das prüft die
+  Mechanik — es belegt den Faktor nicht.
+</div>
+
+{% if not readiness.sufficient %}
+<section class="card">
+  <div class="callout small" style="margin:0">
+    <span class="label">Noch keine Rangfolge möglich</span>
+    Für das Formationsfenster sind <strong>{{ readiness.needed_bars }} Kurstage</strong> je Titel
+    nötig ({{ settings.momentum.lookback_days }} Handelstage Rückblick + 1).
+    Ausreichend versorgt sind erst {{ readiness.ready_count }} von
+    {{ readiness.universe_size }} Titeln, mindestens {{ readiness.min_universe }} wären nötig.
+    Der längste vorhandene Verlauf hat {{ readiness.max_available }} Kurstage.
+    <br><br>
+    Abhilfe: <code>make backfill</code> lädt die Kurshistorie nach.
+    {% if readiness.missing %}
+      <br>Am kürzesten:
+      {% for symbol, bars in readiness.missing %}<code>{{ symbol }}</code> ({{ bars }}){% if not loop.last %}, {% endif %}{% endfor %}
+    {% endif %}
+  </div>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Kennzahlen</h2>
+  {% if not summary.reliable %}
+    <div class="callout small" style="margin:0 0 14px">
+      <span class="label">Noch nicht aussagekräftig</span>
+      {{ summary.closed_count }} geschlossene Position(en) aus
+      {{ summary.rebalance_count }} Umschichtung(en). Punktwerte erscheinen ab
+      n = {{ summary.min_sample }}; bis dahin steht dort das 95 %-Intervall.
+    </div>
+  {% endif %}
+  <dl class="stats">
+    <div class="stat"><dt title="Positionen mit laufender Haltedauer">Offen</dt>
+      <dd>{{ summary.open_count }}</dd></div>
+    <div class="stat"><dt>Geschlossen</dt><dd>{{ summary.closed_count }}</dd></div>
+    <div class="stat"><dt title="Wie oft der Korb neu zusammengestellt wurde">Umschichtungen</dt>
+      <dd>{{ summary.rebalance_count }}</dd></div>
+    <div class="stat">
+      <dt>Trefferquote</dt>
+      <dd>
+        {% if summary.win_rate is not none %}{{ summary.win_rate|rate(1) }}
+        {% else %}<span class="unreliable">n = {{ summary.closed_count }}</span>{% endif %}
+        {% if summary.closed_count %}
+          <small>95 %: {{ summary.win_rate_low|rate }} bis {{ summary.win_rate_high|rate }}</small>
+        {% endif %}
+      </dd>
+    </div>
+    <div class="stat">
+      <dt>Ø Rendite</dt>
+      <dd>
+        {% if summary.avg_return_pct is not none %}
+          <span class="{% if summary.effect_distinguishable %}{{ 'pos' if summary.avg_return_pct > 0 else 'neg' }}{% endif %}">{{ summary.avg_return_pct|pct }}</span>
+        {% else %}<span class="unreliable">n = {{ summary.closed_count }}</span>{% endif %}
+        {% if summary.avg_return_low is not none %}
+          <small>95 %: {{ summary.avg_return_low|pct(1) }} bis {{ summary.avg_return_high|pct(1) }}</small>
+        {% endif %}
+      </dd>
+    </div>
+    {% if summary.closed_count %}
+    <div class="stat"><dt title="Wie sich die geschlossenen Positionen auf beide Seiten verteilen">Long / Short</dt>
+      <dd>{{ summary.long_count }} / {{ summary.short_count }}<small>geschlossen</small></dd></div>
+    {% endif %}
+  </dl>
+  {% if summary.closed_count %}
+    <p class="runinfo" style="margin:14px 0 0">
+      {% if summary.effect_distinguishable %}
+        Das Intervall der mittleren Rendite schließt die Null aus. Bei dieser
+        Universumsgröße ist das dennoch kein Beleg für den Momentum-Faktor.
+      {% else %}
+        Das Intervall der mittleren Rendite enthält die Null — das Ergebnis ist mit
+        „bringt gar nichts“ vereinbar.
+      {% endif %}
+    </p>
+  {% endif %}
+</section>
+
+{% if last_rebalance %}
+<section class="card">
+  <h2>Aktueller Korb</h2>
+  <p class="runinfo" style="margin:0">
+    Umgeschichtet am <strong>{{ last_rebalance.rebalance_date|datefmt }}</strong>.
+    Formationsfenster {{ last_rebalance.formation_start|datefmt }} bis
+    {{ last_rebalance.formation_end|datefmt }} — die letzten
+    {{ last_rebalance.skip_days }} Handelstage davor bleiben bewusst ausgespart.
+    {{ last_rebalance.universe_size }} Titel rangiert, je {{ last_rebalance.group_size }}
+    in Spitze und Schluss.
+  </p>
+</section>
+{% endif %}
+
+<section>
+  <h2>Offene Positionen</h2>
+  <div class="scroll">
+    {% if open_positions %}
+    <table>
+      <thead>
+        <tr>
+          <th><span>Symbol</span></th>
+          <th title="LONG = Spitzengruppe gekauft, SHORT = Schlussgruppe leerverkauft"><span>Seite</span></th>
+          <th class="num" title="Platz in der Rangfolge, 1 = stärkster Titel"><span>Rang</span></th>
+          <th class="num" title="Rendite im Formationsfenster, ohne den jüngsten Monat"><span>Momentum</span></th>
+          <th><span>Einstieg</span></th>
+          <th class="num"><span>Einstiegskurs</span></th>
+          <th class="num"><span>Aktuell</span></th>
+          <th class="num"><span>Unrealisiert</span></th>
+          <th class="num"><span>Verlauf</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in open_positions %}
+        <tr>
+          <td class="sym"><a href="/titel/{{ m.symbol }}">{{ m.symbol }}</a>
+            {% if m.company %}<span class="company">{{ m.company }}</span>{% endif %}</td>
+          <td><span class="tag {{ 'buy' if m.direction == 'LONG' else 'sell' }}">{{ m.direction }}</span></td>
+          <td class="num">{{ m.rank }}</td>
+          <td class="num {{ 'pos' if m.momentum_score > 0 else 'neg' }}">{{ m.momentum_score|pct(1) }}</td>
+          <td>{{ m.entry_date or '–' }}</td>
+          <td class="num">{{ m.entry_price|num }}</td>
+          <td class="num">{{ m.current_price|num }}</td>
+          <td class="num {{ 'pos' if (m.unrealized_pct or 0) > 0 else ('neg' if m.unrealized_pct else '') }}">{{ m.unrealized_pct|pct }}</td>
+          <td class="num">
+            {% if m.days_remaining is not none %}
+              <span class="progress" title="noch {{ m.days_remaining }} von {{ m.holding_period_days }} Handelstagen">
+                <span class="progress-track"><span class="progress-fill"
+                  style="width: {{ (m.progress * 100)|round(0,'floor')|int }}%"></span></span>
+                <span class="progress-label">noch {{ m.days_remaining }} HT</span>
+              </span>
+            {% else %}<span class="muted">–</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <p class="empty">Kein Korb offen. Umgeschichtet wird beim ersten Pipeline-Lauf
+      eines Monats, sobald genug Kurshistorie vorliegt.</p>
+    {% endif %}
+  </div>
+</section>
+
+<section>
+  <h2>Momentum-Rangfolge heute</h2>
+  <p class="runinfo" style="margin:-4px 0 12px">
+    Aktuelle Werte aller Titel, unabhängig vom Umschichtungstermin — so siehst du,
+    wie der nächste Korb aussähe.
+  </p>
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr><th class="num"><span>Rang</span></th><th><span>Symbol</span></th>
+          <th class="num"><span>Momentum</span></th><th class="num"><span>Kurstage</span></th></tr>
+      </thead>
+      <tbody>
+        {% for r in scores %}
+        <tr>
+          <td class="num">{{ r.rank or '–' }}</td>
+          <td class="sym"><a href="/titel/{{ r.symbol }}">{{ r.symbol }}</a>
+            {% if r.company %}<span class="company">{{ r.company }}</span>{% endif %}</td>
+          <td class="num {{ 'pos' if (r.score or 0) > 0 else ('neg' if r.score else '') }}">
+            {% if r.score is not none %}{{ r.score|pct(1) }}{% else %}<span class="muted">zu kurze Historie</span>{% endif %}</td>
+          <td class="num muted">{{ r.bars }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>Geschlossene Positionen</h2>
+  <div class="scroll">
+    {% if closed_positions %}
+    <table>
+      <thead>
+        <tr><th><span>Symbol</span></th><th><span>Seite</span></th>
+          <th class="num"><span>Momentum</span></th><th><span>Einstieg</span></th>
+          <th class="num"><span>Einstiegskurs</span></th><th><span>Ausstieg</span></th>
+          <th class="num"><span>Ausstiegskurs</span></th><th class="num"><span>Rendite</span></th></tr>
+      </thead>
+      <tbody>
+        {% for m in closed_positions %}
+        <tr>
+          <td class="sym"><a href="/titel/{{ m.symbol }}">{{ m.symbol }}</a></td>
+          <td><span class="tag {{ 'buy' if m.direction == 'LONG' else 'sell' }}">{{ m.direction }}</span></td>
+          <td class="num">{{ m.momentum_score|pct(1) }}</td>
+          <td>{{ m.entry_date or '–' }}</td>
+          <td class="num">{{ m.entry_price|num }}</td>
+          <td>{{ m.exit_date or '–' }}</td>
+          <td class="num">{{ m.exit_price|num }}</td>
+          <td class="num {{ 'pos' if (m.return_pct or 0) > 0 else ('neg' if m.return_pct else '') }}">{{ m.return_pct|pct }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <p class="empty">Noch keine Position geschlossen. Das passiert
+      {{ settings.momentum.holding_period_days }} Handelstage nach dem Einstieg.</p>
+    {% endif %}
+  </div>
+</section>
+
+{% endblock %}

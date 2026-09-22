@@ -15,11 +15,14 @@ from app.db import session_scope, sync_tickers
 from app.models import (
     AnalystRecommendation,
     EarningsEvent,
+    MomentumRebalance,
+    MomentumSignal,
     PipelineRun,
     Price,
     Signal,
     Ticker,
 )
+from app.momentum import momentum_score, rank_universe, required_history
 from app.signals import (
     CLOSED,
     OPEN,
@@ -63,6 +66,8 @@ class RunResult:
     prices_fetched: int = 0
     signals_opened: int = 0
     signals_closed: int = 0
+    momentum_opened: int = 0
+    momentum_closed: int = 0
     status: str = "RUNNING"
     errors: list[str] = field(default_factory=list)
 
@@ -118,6 +123,8 @@ def run_daily(
         # Einstiegskurs direkt nach.
         _step(result, "Signal-Erzeugung", lambda: _create_signals(settings, result))
         _step(result, "Positionspflege", lambda: _update_positions(settings, result))
+        if settings.momentum.enabled:
+            _step(result, "Momentum", lambda: _run_momentum(settings, result))
 
         result.status = "PARTIAL" if result.errors else "OK"
     except Exception as exc:  # pragma: no cover - Sicherheitsnetz
@@ -135,13 +142,15 @@ def run_daily(
 
     log.info(
         "Pipeline-Lauf beendet: status=%s events=%d kurse=%d neu (%d abgerufen) "
-        "eroeffnet=%d geschlossen=%d",
+        "pead=%d/%d momentum=%d/%d (eroeffnet/geschlossen)",
         result.status,
         result.events_ingested,
         result.prices_ingested,
         result.prices_fetched,
         result.signals_opened,
         result.signals_closed,
+        result.momentum_opened,
+        result.momentum_closed,
     )
     return result
 
@@ -168,6 +177,8 @@ def _persist_run(run_id: int, result: RunResult) -> None:
         run.prices_ingested = result.prices_ingested
         run.signals_opened = result.signals_opened
         run.signals_closed = result.signals_closed
+        run.momentum_opened = result.momentum_opened
+        run.momentum_closed = result.momentum_closed
         run.message = result.message
 
 
@@ -635,6 +646,171 @@ def _create_signals(settings: Settings, result: RunResult) -> None:
                 event.report_date,
                 decision.reason,
             )
+
+
+# ---------------------------------------------------------------------------
+# Zweite Signalquelle: Cross-Sectional-Momentum
+# ---------------------------------------------------------------------------
+
+
+def _period_key(day: dt.date, cadence: str) -> str:
+    """Schluessel der Umschichtungsperiode - macht den Lauf idempotent."""
+    if cadence != "monthly":
+        raise ValueError(f"Unbekannte Umschichtungsfrequenz: {cadence}")
+    return f"{day.year:04d}-{day.month:02d}"
+
+
+def _run_momentum(settings: Settings, result: RunResult) -> None:
+    """Schliesst faellige Momentum-Positionen und schichtet bei Bedarf um."""
+    _close_momentum_positions(settings, result)
+    _rebalance_momentum(settings, result)
+
+
+def _close_momentum_positions(settings: Settings, result: RunResult) -> None:
+    with session_scope() as session:
+        for signal in session.scalars(
+            select(MomentumSignal).where(MomentumSignal.status == OPEN)
+        ).all():
+            dates = _trading_dates(session, signal.symbol)
+            if not dates:
+                continue
+
+            if signal.entry_price is None:
+                entry_day = find_entry_day(dates, signal.entry_date or dates[0], "bmo")
+                if entry_day is None:
+                    continue
+                price = session.get(Price, {"symbol": signal.symbol, "date": entry_day})
+                if price is None:
+                    continue
+                signal.entry_date = entry_day
+                signal.entry_price = price.close
+
+            if signal.entry_date is None or signal.entry_price is None:
+                continue
+
+            exit_day = find_exit_day(dates, signal.entry_date, signal.holding_period_days)
+            if exit_day is None:
+                continue
+            exit_row = session.get(Price, {"symbol": signal.symbol, "date": exit_day})
+            if exit_row is None:
+                continue
+
+            signal.exit_date = exit_day
+            signal.exit_price = exit_row.close
+            signal.status = CLOSED
+            # LONG rechnet wie BUY, SHORT wie SELL.
+            signal.return_pct = compute_return_pct(
+                "BUY" if signal.direction == "LONG" else "SELL",
+                signal.entry_price,
+                exit_row.close,
+            )
+            result.momentum_closed += 1
+            log.info(
+                "Momentum geschlossen: %s %s -> %.2f%%",
+                signal.symbol,
+                signal.direction,
+                signal.return_pct * 100,
+            )
+
+
+def _rebalance_momentum(settings: Settings, result: RunResult) -> None:
+    cfg = settings.momentum
+    today = dt.date.today()
+    period = _period_key(today, cfg.rebalance)
+
+    with session_scope() as session:
+        if session.scalar(
+            select(MomentumRebalance).where(MomentumRebalance.period_key == period)
+        ):
+            return  # in dieser Periode bereits umgeschichtet
+
+        symbols = _active_symbols(session)
+        scores: dict[str, float | None] = {}
+        formation_start: dt.date | None = None
+        formation_end: dt.date | None = None
+        short_history: list[str] = []
+
+        for symbol in symbols:
+            closes_rows = session.execute(
+                select(Price.date, Price.close)
+                .where(Price.symbol == symbol)
+                .order_by(Price.date)
+            ).all()
+            closes = [row[1] for row in closes_rows]
+            score = momentum_score(closes, cfg.lookback_days, cfg.skip_days)
+            scores[symbol] = score
+            if score is None:
+                short_history.append(symbol)
+                continue
+            start_row = closes_rows[-(cfg.lookback_days + 1)]
+            end_row = closes_rows[-(cfg.skip_days + 1)]
+            formation_start = start_row[0] if formation_start is None else min(
+                formation_start, start_row[0]
+            )
+            formation_end = end_row[0] if formation_end is None else max(
+                formation_end, end_row[0]
+            )
+
+        basket = rank_universe(scores, cfg.group_fraction, cfg.min_universe)
+
+        if basket.is_empty:
+            log.info("Momentum: keine Umschichtung - %s", basket.reason)
+            if short_history:
+                raise RuntimeError(
+                    f"Momentum uebersprungen: {basket.reason} Zu kurze Historie bei "
+                    f"{', '.join(short_history[:8])}. Kurse mit 'make backfill' "
+                    f"nachladen (noetig: {required_history(cfg.lookback_days)} Kurstage)."
+                )
+            return
+
+        rebalance = MomentumRebalance(
+            period_key=period,
+            rebalance_date=today,
+            formation_start=formation_start,
+            formation_end=formation_end,
+            universe_size=basket.universe_size,
+            group_size=basket.group_size,
+            lookback_days=cfg.lookback_days,
+            skip_days=cfg.skip_days,
+        )
+        session.add(rebalance)
+        session.flush()
+
+        for ranked in basket.longs + basket.shorts:
+            dates = _trading_dates(session, ranked.symbol)
+            entry_day = find_entry_day(dates, today, "bmo") if dates else None
+            if entry_day is None and dates:
+                entry_day = dates[-1]   # noch kein Kurs von heute: letzter bekannter
+            entry_price = None
+            if entry_day is not None:
+                price = session.get(Price, {"symbol": ranked.symbol, "date": entry_day})
+                entry_price = price.close if price else None
+
+            session.add(
+                MomentumSignal(
+                    symbol=ranked.symbol,
+                    rebalance_id=rebalance.id,
+                    direction=ranked.direction,
+                    rank=ranked.rank,
+                    momentum_score=ranked.score,
+                    entry_date=entry_day if entry_price is not None else None,
+                    entry_price=entry_price,
+                    holding_period_days=cfg.holding_period_days,
+                    status=OPEN,
+                )
+            )
+            result.momentum_opened += 1
+
+        log.info(
+            "Momentum umgeschichtet (%s): %d long, %d short aus %d Titeln. "
+            "Spitze: %s | Schluss: %s",
+            period,
+            len(basket.longs),
+            len(basket.shorts),
+            basket.universe_size,
+            ", ".join(f"{r.symbol} {r.score:+.1%}" for r in basket.longs),
+            ", ".join(f"{r.symbol} {r.score:+.1%}" for r in basket.shorts),
+        )
 
 
 # ---------------------------------------------------------------------------

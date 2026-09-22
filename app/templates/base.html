@@ -140,10 +140,11 @@
     .ticker-close{display:block;font-size:30px;font-variant-numeric:tabular-nums;
       line-height:1.1}
 
-    .pead-status h2{font-size:19px;margin:4px 0 8px}
-    .pead-status p{margin:0;color:var(--ink-muted)}
-    .pead-status .label{color:var(--ink-faint);font-size:11px;letter-spacing:.06em;
-      text-transform:uppercase;font-weight:700;margin:0}
+    .pead-status h2,.momentum-status h2{font-size:19px;margin:4px 0 8px}
+    .pead-status p,.momentum-status p{margin:0;color:var(--ink-muted)}
+    .pead-status .label,.momentum-status .label{color:var(--ink-faint);font-size:11px;
+      letter-spacing:.06em;text-transform:uppercase;font-weight:700;margin:0}
+    .momentum-status .label .muted{text-transform:none;letter-spacing:0;font-weight:400}
     .pead-active{border-left:3px solid var(--accent)}
     .pead-active h2{color:var(--accent)}
 
@@ -234,6 +235,7 @@
     <nav>
       <a href="/" {% if active == 'open' %}class="active"{% endif %}>Offene Signale</a>
       <a href="/titel" {% if active == 'tickers' %}class="active"{% endif %}>Titel</a>
+      <a href="/momentum" {% if active == 'momentum' %}class="active"{% endif %}>Momentum</a>
       <a href="/history" {% if active == 'history' %}class="active"{% endif %}>Verlauf</a>
       <a href="/events" {% if active == 'events' %}class="active"{% endif %}>Earnings-Events</a>
       <a href="/docs">API</a>

@@ -34,6 +34,34 @@
   {% endif %}
 </section>
 
+{% set own_score = (momentum_scores | selectattr('symbol', 'equalto', d.symbol) | list | first) %}
+{% set momentum_open = momentum | selectattr('status', 'equalto', 'OPEN') | list %}
+<section class="card momentum-status">
+  <p class="label">Momentum-Status <span class="muted">· zweite Quelle, unabhängig von PEAD</span></p>
+  {% if momentum_open %}
+    {% set m = momentum_open[0] %}
+    <h2>{{ m.direction }} im aktuellen Korb</h2>
+    <p>Rang {{ m.rank }} bei einem Momentum von {{ m.momentum_score|pct(1) }}.
+      {% if m.days_remaining is not none %}Noch {{ m.days_remaining }} von
+      {{ m.holding_period_days }} Handelstagen bis zur Umschichtung.{% endif %}</p>
+  {% elif own_score and own_score.score is not none %}
+    <h2>Nicht im Korb</h2>
+    <p>Momentum {{ own_score.score|pct(1) }}, Rang {{ own_score.rank }} von
+      {{ momentum_scores | selectattr('score') | list | length }} bewertbaren Titeln —
+      damit im Mittelfeld, also weder in der Spitzen- noch in der Schlussgruppe.</p>
+  {% else %}
+    <h2>Noch nicht bewertbar</h2>
+    <p>Für das Formationsfenster fehlt Kurshistorie
+      ({{ own_score.bars if own_score else 0 }} Kurstage vorhanden).
+      <code>make backfill</code> lädt sie nach.</p>
+  {% endif %}
+  <p class="runinfo" style="margin-top:10px">
+    Momentum ist eine <strong>relative</strong> Aussage: der Titel steht besser oder
+    schlechter da als die anderen im Universum — nicht gut oder schlecht für sich.
+    <a href="/momentum">Ganze Rangfolge ansehen</a>
+  </p>
+</section>
+
 {% include "_chart.html" %}
 
 <section class="card">

@@ -130,3 +130,17 @@ def test_t_wert_naehert_sich_der_normalverteilung():
 def test_t_wert_braucht_mindestens_einen_freiheitsgrad():
     with pytest.raises(ValueError):
         t_critical_95(0)
+
+
+# -- Anzeige ----------------------------------------------------------------
+
+
+def test_winzige_negative_werte_werden_nicht_als_minus_null_gezeigt():
+    """"-0,00 %" ist keine Zahl, die jemand lesen will."""
+    from app.main import _fmt_pct
+
+    assert _fmt_pct(-0.0) == "+0.00 %"
+    assert _fmt_pct(-0.000001) == "+0.00 %"
+    assert _fmt_pct(0.0) == "+0.00 %"
+    assert _fmt_pct(None) == "–"
+    assert _fmt_pct(-0.0123) == "-1.23 %"
