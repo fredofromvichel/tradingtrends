@@ -59,6 +59,10 @@ class EarningsEvent(Base):
     # Als Bruch gespeichert: 0.05 == +5 %.
     surprise_pct: Mapped[float | None] = mapped_column(Float, default=None)
     sue: Mapped[float | None] = mapped_column(Float, default=None)
+    # Zutaten des SUE, damit der Rechenweg nachvollziehbar bleibt: durch
+    # welche Streuung geteilt wurde und auf wie vielen Quartalen sie beruht.
+    surprise_stdev: Mapped[float | None] = mapped_column(Float, default=None)
+    history_count: Mapped[int | None] = mapped_column(Integer, default=None)
     ingested_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
     # True, sobald die Signal-Entscheidung getroffen wurde (auch wenn sie
     # "kein Signal" lautete). Macht den Lauf idempotent.
@@ -103,6 +107,9 @@ class Signal(Base):
     # spaeteren Neuberechnungen abhaengt.
     sue_at_signal: Mapped[float | None] = mapped_column(Float, default=None)
     surprise_pct_at_signal: Mapped[float | None] = mapped_column(Float, default=None)
+    # Was die uebrigen beobachteten Titel im selben Zeitraum gemacht haben.
+    # Ohne diesen Massstab sagt eine Rendite fuer sich genommen wenig.
+    benchmark_return_pct: Mapped[float | None] = mapped_column(Float, default=None)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
 
 
@@ -197,6 +204,7 @@ class MomentumSignal(Base):
     exit_price: Mapped[float | None] = mapped_column(Float, default=None)
     status: Mapped[str] = mapped_column(String(8), default="OPEN", nullable=False, index=True)
     return_pct: Mapped[float | None] = mapped_column(Float, default=None)
+    benchmark_return_pct: Mapped[float | None] = mapped_column(Float, default=None)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
 
 

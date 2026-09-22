@@ -34,6 +34,8 @@
           <th class="num" title="Standardized Unexpected Earnings: Überraschung geteilt durch die übliche Schwankung dieses Unternehmens"><span>SUE</span></th>
           <th class="num" title="Abweichung des tatsächlichen Gewinns je Aktie von der Analystenschätzung"><span>Surprise</span></th>
           <th class="num" title="Endgültiges Ergebnis, brutto – ohne Gebühren, Spread und Steuern"><span>Rendite</span></th>
+          <th class="num" title="Was die übrigen beobachteten Titel im selben Zeitraum im Mittel machten"><span>Vergleich</span></th>
+          <th title="Rechenweg aufklappen"><span>Warum?</span></th>
         </tr>
       </thead>
       <tbody>
@@ -52,9 +54,12 @@
           <td class="num">{{ s.holding_period_days }} HT</td>
           <td class="num">{{ s.sue|sue }}</td>
           <td class="num">{{ s.surprise_pct|pct(1) }}</td>
-          <td class="num {{ 'pos' if (s.return_pct or 0) > 0 else ('neg' if s.return_pct else '') }}">
-            {{ s.return_pct|pct }}</td>
+          <td class="num {{ 'pos' if (s.return_pct or 0) > 0 else ('neg' if s.return_pct else '') }}"
+              data-sort="{{ s.return_pct or 0 }}">{{ s.return_pct|pct }}</td>
+          <td class="num muted" data-sort="{{ s.benchmark_return_pct or 0 }}">{{ s.benchmark_return_pct|pct }}</td>
+          <td class="why">{% set e = explanations.get(s.id) %}{% if e %}<button type="button" class="why-btn" data-explain aria-expanded="false">Warum?</button>{% endif %}</td>
         </tr>
+        {% if e %}{% include "_explain_row.html" %}{% endif %}
       {% endfor %}
       </tbody>
     </table>

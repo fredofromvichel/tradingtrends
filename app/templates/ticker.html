@@ -69,6 +69,10 @@
     schlechter da als die anderen im Universum — nicht gut oder schlecht für sich.
     <a href="/momentum">Ganze Rangfolge ansehen</a>
   </p>
+  {% if momentum_open and momentum_explanations.get(momentum_open[0].id) %}
+    {% set e = momentum_explanations[momentum_open[0].id] %}
+    {% include "_explain.html" %}
+  {% endif %}
 </section>
 
 {% include "_chart.html" %}
@@ -217,6 +221,8 @@
           <th class="num"><span>Einstiegskurs</span></th><th><span>Ausstieg</span></th>
           <th class="num"><span>SUE</span></th><th class="num"><span>Surprise</span></th>
           <th class="num"><span>Ergebnis</span></th>
+          <th class="num" title="Was die übrigen Titel im selben Zeitraum machten"><span>Vergleich</span></th>
+          <th><span>Warum?</span></th>
         </tr>
       </thead>
       <tbody>
@@ -234,7 +240,10 @@
             {% elif s.unrealized_pct is not none %}{{ s.unrealized_pct|pct }} <span class="muted">offen</span>
             {% else %}–{% endif %}
           </td>
+          <td class="num muted">{{ s.benchmark_return_pct|pct }}</td>
+          <td class="why">{% set e = explanations.get(s.id) %}{% if e %}<button type="button" class="why-btn" data-explain aria-expanded="false">Warum?</button>{% endif %}</td>
         </tr>
+        {% if e %}{% include "_explain_row.html" %}{% endif %}
         {% endfor %}
       </tbody>
     </table>

@@ -27,11 +27,11 @@ from app.signals import (
     CLOSED,
     OPEN,
     compute_return_pct,
-    compute_sue,
     compute_surprise_pct,
     decide,
     find_entry_day,
     find_exit_day,
+    sue_ingredients,
 )
 from app.sources.finnhub_client import (
     FinnhubAuthError,
@@ -531,7 +531,9 @@ def _store_event(settings: Settings, raw: RawEarnings, history: list[RawEarnings
         if value is not None:
             hist_values.append(value)
 
-    sue = compute_sue(surprise_pct, hist_values, settings.min_history_for_sue)
+    sue, stdev, history_count = sue_ingredients(
+        surprise_pct, hist_values, settings.min_history_for_sue
+    )
 
     with session_scope() as session:
         existing = session.scalar(
@@ -548,6 +550,8 @@ def _store_event(settings: Settings, raw: RawEarnings, history: list[RawEarnings
                 existing.eps_estimate = raw.eps_estimate
                 existing.surprise_pct = surprise_pct
                 existing.sue = sue
+                existing.surprise_stdev = stdev
+                existing.history_count = history_count
             return False
 
         session.add(
@@ -561,6 +565,8 @@ def _store_event(settings: Settings, raw: RawEarnings, history: list[RawEarnings
                 eps_actual=raw.eps_actual,
                 surprise_pct=surprise_pct,
                 sue=sue,
+                surprise_stdev=stdev,
+                history_count=history_count,
                 processed=False,
             )
         )
@@ -630,6 +636,32 @@ def _ingest_prices(
 # ---------------------------------------------------------------------------
 
 
+def _benchmark_return(
+    session: Session, start: dt.date, end: dt.date, exclude: str | None = None
+) -> float | None:
+    """Gleichgewichtete Durchschnittsrendite aller beobachteten Titel im Zeitraum.
+
+    Der Massstab, an dem sich ein Signal messen lassen muss: stieg der Kurs,
+    weil das Signal etwas getroffen hat, oder weil alles stieg? Der Titel
+    selbst bleibt aussen vor, sonst vergliche er sich teilweise mit sich selbst.
+    """
+    if start >= end:
+        return None
+
+    symbols = [s for s in _active_symbols(session) if s != exclude]
+    renditen: list[float] = []
+    for symbol in symbols:
+        anfang = session.get(Price, {"symbol": symbol, "date": start})
+        ende = session.get(Price, {"symbol": symbol, "date": end})
+        if anfang is None or ende is None or anfang.close <= 0:
+            continue
+        renditen.append((ende.close - anfang.close) / anfang.close)
+
+    if len(renditen) < 3:      # zu duenn fuer einen Durchschnitt
+        return None
+    return sum(renditen) / len(renditen)
+
+
 def _update_positions(settings: Settings, result: RunResult) -> None:
     with session_scope() as session:
         open_signals = list(
@@ -676,6 +708,9 @@ def _update_positions(settings: Settings, result: RunResult) -> None:
             signal.status = CLOSED
             signal.return_pct = compute_return_pct(
                 signal.signal_type, signal.entry_price, exit_price_row.close
+            )
+            signal.benchmark_return_pct = _benchmark_return(
+                session, signal.entry_date, exit_day, exclude=signal.symbol
             )
             result.signals_closed += 1
             log.info(
@@ -827,6 +862,9 @@ def _close_momentum_positions(settings: Settings, result: RunResult) -> None:
                 "BUY" if signal.direction == "LONG" else "SELL",
                 signal.entry_price,
                 exit_row.close,
+            )
+            signal.benchmark_return_pct = _benchmark_return(
+                session, signal.entry_date, exit_day, exclude=signal.symbol
             )
             result.momentum_closed += 1
             log.info(

@@ -122,6 +122,7 @@
           <th class="num"><span>Aktuell</span></th>
           <th class="num"><span>Unrealisiert</span></th>
           <th class="num"><span>Verlauf</span></th>
+          <th><span>Warum?</span></th>
         </tr>
       </thead>
       <tbody>
@@ -145,7 +146,9 @@
               </span>
             {% else %}<span class="muted">–</span>{% endif %}
           </td>
+          <td class="why">{% set e = explanations.get(m.id) %}{% if e %}<button type="button" class="why-btn" data-explain aria-expanded="false">Warum?</button>{% endif %}</td>
         </tr>
+        {% if e %}{% include "_explain_row.html" %}{% endif %}
         {% endfor %}
       </tbody>
     </table>
@@ -193,7 +196,8 @@
         <tr><th><span>Symbol</span></th><th><span>Seite</span></th>
           <th class="num"><span>Momentum</span></th><th><span>Einstieg</span></th>
           <th class="num"><span>Einstiegskurs</span></th><th><span>Ausstieg</span></th>
-          <th class="num"><span>Ausstiegskurs</span></th><th class="num"><span>Rendite</span></th></tr>
+          <th class="num"><span>Ausstiegskurs</span></th><th class="num"><span>Rendite</span></th>
+          <th class="num"><span>Vergleich</span></th><th><span>Warum?</span></th></tr>
       </thead>
       <tbody>
         {% for m in closed_positions %}
@@ -205,8 +209,12 @@
           <td class="num">{{ m.entry_price|num }}</td>
           <td>{{ m.exit_date or '–' }}</td>
           <td class="num">{{ m.exit_price|num }}</td>
-          <td class="num {{ 'pos' if (m.return_pct or 0) > 0 else ('neg' if m.return_pct else '') }}">{{ m.return_pct|pct }}</td>
+          <td class="num {{ 'pos' if (m.return_pct or 0) > 0 else ('neg' if m.return_pct else '') }}"
+              data-sort="{{ m.return_pct or 0 }}">{{ m.return_pct|pct }}</td>
+          <td class="num muted">{{ m.benchmark_return_pct|pct }}</td>
+          <td class="why">{% set e = explanations.get(m.id) %}{% if e %}<button type="button" class="why-btn" data-explain aria-expanded="false">Warum?</button>{% endif %}</td>
         </tr>
+        {% if e %}{% include "_explain_row.html" %}{% endif %}
         {% endfor %}
       </tbody>
     </table>

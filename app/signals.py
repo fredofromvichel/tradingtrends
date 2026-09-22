@@ -51,6 +51,29 @@ def compute_surprise_pct(
     return None
 
 
+def sue_ingredients(
+    surprise_pct: float | None,
+    history: list[float],
+    min_history: int = 4,
+) -> tuple[float | None, float | None, int]:
+    """SUE samt seiner Zutaten: (sue, verwendete Streuung, Anzahl Quartale).
+
+    Die Streuung wird mitgegeben, damit der Rechenweg spaeter nachvollziehbar
+    bleibt - "42 % geteilt durch die uebliche Schwankung von 39 %" ist die
+    Aussage, nicht die nackte Zahl 1.08.
+    """
+    clean = [h for h in history if h is not None]
+    if surprise_pct is None or len(clean) < min_history:
+        return None, None, len(clean)
+    try:
+        std = statistics.stdev(clean)
+    except statistics.StatisticsError:
+        return None, None, len(clean)
+    if std <= 0:
+        return None, std, len(clean)
+    return surprise_pct / std, std, len(clean)
+
+
 def compute_sue(
     surprise_pct: float | None,
     history: list[float],

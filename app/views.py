@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import market_context
+from app.explain import Explanation, explain_pead
 from app.market_context import MarketContext
 from app.models import EarningsEvent, PipelineRun, Price, Signal
 from app.signals import CLOSED, OPEN, trading_days_elapsed
@@ -37,6 +38,7 @@ class SignalView:
     sue: float | None
     surprise_pct: float | None
     return_pct: float | None
+    benchmark_return_pct: float | None
     unrealized_pct: float | None
     # Anteil der Haltedauer, der verstrichen ist (0.0-1.0) - nur zur Anzeige.
     progress: float | None
@@ -102,6 +104,7 @@ def _build(
         sue=signal.sue_at_signal,
         surprise_pct=signal.surprise_pct_at_signal,
         return_pct=signal.return_pct,
+        benchmark_return_pct=signal.benchmark_return_pct,
         unrealized_pct=unrealized,
         progress=progress,
     )
@@ -122,6 +125,28 @@ def closed_signals(session: Session, limit: int | None = None) -> list[SignalVie
     rows = session.scalars(query).all()
     context = market_context.load(session, {s.symbol for s in rows})
     return [_build(session, s, context) for s in rows]
+
+
+def explanations_for(session: Session, views_: list, settings) -> dict[int, Explanation]:
+    """Rechenwege zu den übergebenen Signalen, in einer Abfrage vorbereitet."""
+    if not views_:
+        return {}
+    ids = [v.id for v in views_]
+    signals = {
+        s.id: s
+        for s in session.scalars(select(Signal).where(Signal.id.in_(ids))).all()
+    }
+    event_ids = [s.earnings_event_id for s in signals.values()]
+    events = {
+        e.id: e
+        for e in session.scalars(
+            select(EarningsEvent).where(EarningsEvent.id.in_(event_ids))
+        ).all()
+    }
+    return {
+        sid: explain_pead(signal, events.get(signal.earnings_event_id), settings)
+        for sid, signal in signals.items()
+    }
 
 
 def earnings_events(session: Session, limit: int = 200) -> list[dict]:

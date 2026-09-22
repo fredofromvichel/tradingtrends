@@ -129,6 +129,44 @@ erklärt — PEAD, EPS, Surprise, SUE, Handelstage, Konfidenzintervall. Zusätzl
 hat jede Spaltenüberschrift einen Tooltip (gepunktete Unterlinie), und das
 Mouseover auf einem Symbol zeigt Firmenname, Branche und Börse.
 
+## Warum dieses Signal? Der Rechenweg
+
+Eine Empfehlung, die man nicht nachrechnen kann, ist eine Behauptung. Deshalb
+trägt jedes Signal einen **Rechenweg** — in Tabellen hinter dem Knopf
+„Warum?", auf dem Steckbrief aufgeklappt über dem Chart. Er führt in sieben
+Schritten vom Geschäftsbericht bis zur Rendite und nennt in jedem Schritt die
+Rechnung mit den tatsächlichen Zahlen dieses Signals:
+
+| Schritt | Was dort steht |
+|---|---|
+| Die Meldung | Gemeldeter Gewinn je Aktie gegen die Analystenschätzung |
+| Die Überraschung | Abweichung in Prozent, mit der Division, aus der sie entsteht |
+| Ist das viel? | Die Abweichung gemessen an der **eigenen** üblichen Schwankung des Unternehmens — das ist der SUE |
+| Warum BUY/SELL | Welche Schwelle überschritten wurde und warum die Forschung daraus ein Signal ableitet |
+| Einstieg | Welcher Schlusskurs genommen wurde und warum erst der Folgetag |
+| Ausstieg | Kurs nach Ablauf der Haltedauer, mit der Renditerechnung |
+| Einordnung | Was die **übrigen** beobachteten Titel im selben Zeitraum machten |
+
+Der letzte Schritt ist der wichtigste und in `app/pipeline.py`
+(`_benchmark_return`) hinterlegt: beim Schließen einer Position wird die
+gleichgewichtete Rendite aller anderen aktiven Titel über **dasselbe**
+Zeitfenster berechnet und als Spalte „Vergleich" mitgeführt. Eine Rendite von
++8,6 % sagt nichts, solange offen bleibt, ob der Gesamtmarkt in derselben Zeit
+12 % gestiegen ist. Erst die Differenz ist die eigentliche Frage. Nötig sind
+dafür mindestens drei Vergleichswerte; darunter bleibt die Spalte leer, statt
+eine Scheinaussage zu erzeugen.
+
+Momentum-Signale tragen denselben Rechenweg mit eigener Kette: Rangfolge,
+warum der letzte Monat ausgespart bleibt, Platzierung im Universum,
+Einstieg, Ausstieg, Einordnung. Dort steht zusätzlich ein Schritt „wichtig zu
+verstehen", der auf die Relativität hinweist — ein LONG heißt „besser als die
+anderen", nicht „gute Aktie".
+
+Der Rechenweg wird aus den gespeicherten Werten erzeugt (`app/explain.py`),
+nicht aus Textbausteinen: dafür halten `earnings_events.surprise_stdev` und
+`.history_count` die Zutaten des SUE fest. Steht eine Zutat nicht in der
+Datenbank, fehlt der Schritt — er wird nicht geraten.
+
 ### JSON-API
 
 | Methode | Pfad | Beschreibung |
@@ -201,6 +239,50 @@ und ist beliebig wiederholbar, ohne Duplikate zu erzeugen.
 
 > Die ausgelieferte Ticker-Liste ist ein **Platzhalter**. Vor dem ersten
 > ernsthaften Lauf dort die eigenen 20 Symbole eintragen.
+
+#### Symbole von boerse.de auf Yahoo-Schreibweise bringen
+
+Deutsche Portale führen eigene Kürzel, die Yahoo Finance nicht kennt. Die
+Umschlüsselung ist nicht mechanisch — zwei Fallstricke haben es in sich:
+
+- **`AOMD` ist Alstom, nicht AMD.** Das Kürzel sieht aus wie der Chiphersteller
+  und ist der französische Zugbauer. Wer es falsch übernimmt, bekommt
+  klaglos Signale für die falsche Firma. Gegenprobe über den Kurs:
+  Alstom notiert zweistellig, AMD dreistellig.
+- **`AIR` ist Airbus, nicht AAR Corp.** An der NYSE trägt AAR Corp dasselbe
+  Kürzel.
+
+Die Endung bestimmt den Handelsplatz: `.DE` für Xetra, `.F` für Frankfurt,
+ohne Endung für die US-Börsen. Ein US-Listing ist dem deutschen vorzuziehen,
+wo es existiert — nur dort liefert Finnhub Earnings-Daten (siehe
+[Wenn Finnhub einen Titel nicht abdeckt](#wenn-finnhub-einen-titel-nicht-abdeckt)).
+`SAP` (NYSE) ist deshalb brauchbarer als `SAP.DE`.
+
+| boerse.de | Yahoo | Unternehmen |
+|---|---|---|
+| NVD | `NVDA` | NVIDIA |
+| MSF | `MSFT` | Microsoft |
+| APC | `AAPL` | Apple |
+| FB2A | `META` | Meta Platforms |
+| AMZ | `AMZN` | Amazon |
+| PTX | `PLTR` | Palantir |
+| AHLA | `BABA` | Alibaba (NYSE) |
+| — | `SAP` | SAP SE (NYSE-Listing) |
+| AIR | `AIR.DE` | Airbus |
+| ENR | `ENR.DE` | Siemens Energy |
+| RWE | `RWE.DE` | RWE |
+| HAG | `HAG.DE` | Hensoldt |
+| R3NK | `R3NK.DE` | RENK Group |
+| AFX | `AFX.DE` | Carl Zeiss Meditec |
+| TKMS | `TKMS.DE` | TKMS (Spin-off, kurze Historie) |
+| TUI1 | `TUI1.DE` | TUI |
+| AOMD | `AOMD.DE` | **Alstom** — nicht AMD |
+| AXI1 | `AXI1.F` | Atos |
+| DAU0 | `DAU0.F` | Dassault Aviation |
+| BY6 | `BY6.F` | BYD |
+
+Ob ein Symbol trägt, zeigt `make check`: Titel ohne Kurshistorie stehen dort
+mit Namen, statt still zu fehlen.
 
 **Eigene Tickerliste über ein Update retten.** `config.yaml` liegt im Repo,
 ein Branchwechsel oder ein größeres Update bringt also die Fassung aus der
@@ -460,7 +542,10 @@ und mit vorher festgelegten Parametern.
 **Bewusst nicht gebaut:** eine Trendprognose oder Erfolgswahrscheinlichkeit je
 Signal. Aus dieser Datenlage wäre das eine erfundene Zahl. Was die Seite
 stattdessen zeigt, ist der faktische Verlauf jeder offenen Position — wie weit
-die Haltedauer fortgeschritten ist und wo der Kurs gerade steht.
+die Haltedauer fortgeschritten ist und wo der Kurs gerade steht — und den
+[Rechenweg](#warum-dieses-signal-der-rechenweg), der jede Zahl auf ihre
+Herkunft zurückführt. Nachvollziehbarkeit ersetzt die Prognose nicht, aber
+sie ist das, was sich aus den Daten ehrlich sagen lässt.
 
 ### Warum der Kurskontext keine Prognose ist
 

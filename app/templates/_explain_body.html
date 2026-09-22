@@ -1,0 +1,13 @@
+{# Die Schrittkette selbst. Getrennt vom Rahmen, weil sie an zwei Stellen
+   auftaucht: aufgeklappt oben auf der Titelseite und als ausklappbare
+   Zeile unter einem Tabelleneintrag. #}
+<ol class="explain-steps">
+  {% for step in e.steps %}
+  <li class="explain-step tone-{{ step.tone }}">
+    <p class="explain-label">{{ step.label }}</p>
+    <p class="explain-text">{{ step.text|safe }}</p>
+    {% if step.formula %}<p class="explain-formula">{{ step.formula }}</p>{% endif %}
+  </li>
+  {% endfor %}
+</ol>
+{% if e.caveat %}<p class="explain-caveat">{{ e.caveat }}</p>{% endif %}

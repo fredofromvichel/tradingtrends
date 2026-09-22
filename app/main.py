@@ -204,11 +204,13 @@ def index(request: Request, session: Session = Depends(get_session)):
 
 @app.get("/history", response_class=None)
 def history(request: Request, session: Session = Depends(get_session)):
+    geschlossene = views.closed_signals(session)
     return templates.TemplateResponse(
         request=request,
         name="history.html",
         context={
-            "signals": views.closed_signals(session),
+            "signals": geschlossene,
+            "explanations": views.explanations_for(session, geschlossene, get_settings()),
             "summary": views.summary(session),
             "last_run": views.last_run(session),
             "settings": get_settings(),
@@ -255,12 +257,19 @@ def ticker_page(
     detail = ticker_view.ticker_detail(session, settings, symbol)
     if detail is None:
         raise HTTPException(status_code=404, detail=f"Unbekanntes Symbol: {symbol}")
+    eigene_momentum = momentum_view.for_symbol(session, detail.symbol)
     return templates.TemplateResponse(
         request=request,
         name="ticker.html",
         context={
             "d": detail,
-            "momentum": momentum_view.for_symbol(session, detail.symbol),
+            "explanations": views.explanations_for(
+                session, detail.open_signals + detail.closed_signals, settings
+            ),
+            "momentum": eigene_momentum,
+            "momentum_explanations": momentum_view.explanations_for(
+                session, eigene_momentum, settings
+            ),
             "momentum_scores": momentum_view.current_scores(session, settings),
             "last_run": views.last_run(session),
             "summary": views.summary(session),
@@ -272,12 +281,18 @@ def ticker_page(
 @app.get("/momentum", response_class=None)
 def momentum_page(request: Request, session: Session = Depends(get_session)):
     settings = get_settings()
+    offene_momentum = momentum_view.open_positions(session)
+    geschlossene_momentum = momentum_view.closed_positions(session)
     return templates.TemplateResponse(
         request=request,
         name="momentum.html",
         context={
-            "open_positions": momentum_view.open_positions(session),
-            "closed_positions": momentum_view.closed_positions(session),
+            "open_positions": offene_momentum,
+            "closed_positions": geschlossene_momentum,
+            "explanations": {
+                **momentum_view.explanations_for(session, offene_momentum, settings),
+                **momentum_view.explanations_for(session, geschlossene_momentum, settings),
+            },
             "scores": momentum_view.current_scores(session, settings),
             "readiness": momentum_view.readiness(session, settings),
             "summary": momentum_view.summary(session),

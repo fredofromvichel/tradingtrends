@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app import market_context
 from app.config import Settings
+from app.explain import Explanation, explain_momentum
 from app.market_context import MarketContext
 from app.models import MomentumRebalance, MomentumSignal, Price, Ticker
 from app.momentum import momentum_score, required_history
@@ -40,6 +41,7 @@ class MomentumView:
     progress: float | None
     status: str
     return_pct: float | None
+    benchmark_return_pct: float | None
     unrealized_pct: float | None
     rebalance_date: str | None
 
@@ -85,6 +87,7 @@ def _build(
         progress=progress,
         status=signal.status,
         return_pct=signal.return_pct,
+        benchmark_return_pct=signal.benchmark_return_pct,
         unrealized_pct=unrealized,
         rebalance_date=rebalance.rebalance_date.isoformat() if rebalance else None,
     )
@@ -120,6 +123,31 @@ def for_symbol(session: Session, symbol: str) -> list[MomentumView]:
     ).all()
     context = market_context.load(session, {s.symbol for s in rows})
     return [_build(session, s, context) for s in rows]
+
+
+def explanations_for(session: Session, views_: list, settings: Settings) -> dict[int, Explanation]:
+    """Rechenwege zu den übergebenen Momentum-Positionen."""
+    if not views_:
+        return {}
+    ids = [v.id for v in views_]
+    signals = {
+        s.id: s
+        for s in session.scalars(
+            select(MomentumSignal).where(MomentumSignal.id.in_(ids))
+        ).all()
+    }
+    rebalances = {
+        r.id: r
+        for r in session.scalars(
+            select(MomentumRebalance).where(
+                MomentumRebalance.id.in_([s.rebalance_id for s in signals.values()])
+            )
+        ).all()
+    }
+    return {
+        sid: explain_momentum(signal, rebalances.get(signal.rebalance_id), settings)
+        for sid, signal in signals.items()
+    }
 
 
 def last_rebalance(session: Session) -> MomentumRebalance | None:

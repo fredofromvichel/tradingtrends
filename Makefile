@@ -71,7 +71,7 @@ shell:
 
 test:
 	$(COMPOSE) run --rm --no-deps -e FINNHUB_API_KEY=test -v "$(PWD)/tests:/app/tests:ro" \
-		-v "$(PWD)/pytest.ini:/app/pytest.ini:ro" \
+		-v "$(PWD)/pytest.ini:/app/pytest.ini:ro" -v "$(PWD)/tools:/app/tools:ro" \
 		--entrypoint sh app -c "pip install --quiet --root-user-action=ignore pytest && python -m pytest"
 
 reset:
