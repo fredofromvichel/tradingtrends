@@ -474,8 +474,11 @@ WAL-Modus, damit das Frontend lesen kann, während ein Lauf schreibt.
 
 Beim Start werden fehlende Tabellen **und fehlende Spalten** ergänzt. Ein
 `git pull` mit neuen Feldern kostet daher nicht die bereits verfolgten Signale.
-Geänderte Typen oder neue Constraints deckt das nicht ab — dafür bleibt
-`make reset`.
+Spalten ohne `NULL` bekommen dabei den Standardwert aus dem Modell für die
+bestehenden Zeilen; lässt sich eine Spalte nicht gefahrlos nachtragen, bricht
+der Start mit einer lesbaren Meldung ab, statt später bei jeder Abfrage mit
+`no such column` zu scheitern. Geänderte Typen und neue Constraints deckt das
+nicht ab — dafür bleibt `make reset`.
 
 ```
 app/
@@ -521,7 +524,7 @@ app/
 make test
 ```
 
-149 Tests, ohne Netzzugriff:
+156 Tests, ohne Netzzugriff:
 
 * `tests/test_signals.py` — Surprise, SUE, Schwellenwerte, Short-Rendite,
   Handelstags-Arithmetik über Wochenenden, Einstiegstag je Meldezeitpunkt.
@@ -548,6 +551,7 @@ make test
 | Recherche-Links treffen das Falsche | Begriffe in `config.yaml` unter `research:` anpassen, `make restart`. Häufigste Ursachen: fehlende Branchenübersetzung (die englische Bezeichnung wird dann roh gesucht) oder ein zu generischer Firmenname. |
 | `make seed` findet trotzdem nichts | Fenster vergrößern (`make seed DAYS=400`); oder `/calendar/earnings` ist im Tarif gesperrt (`make check` zeigt es); oder die Ticker sind keine US-Titel. |
 | Keine Kursdaten für ein Symbol | Schreibweise gegen Yahoo Finance prüfen (Xetra z. B. `SAP.DE`). |
+| Jede Seite antwortet mit „Internal Server Error" | Im Log steht meist `no such column`. Die Datenbank ist älter als der Code. Ab dieser Fassung ergänzt der Start fehlende Spalten selbst — also `git pull && make rebuild`. Bleibt es dabei, hilft `make reset` (Kurse holt `make backfill` zurück). |
 | `./data/poc.db` gehört root | `APP_UID`/`APP_GID` in `.env` auf die eigene ID setzen, `make up`. |
 | Port 8000 belegt | `HOST_PORT` in `.env` ändern, `make up`. |
 

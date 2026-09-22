@@ -15,6 +15,10 @@ from app.models import Base, Ticker
 
 log = logging.getLogger(__name__)
 
+
+class SchemaOutOfDate(RuntimeError):
+    """Die Datei laesst sich nicht gefahrlos auf den Modellstand bringen."""
+
 _engine: Engine | None = None
 _SessionLocal: sessionmaker[Session] | None = None
 
@@ -48,6 +52,26 @@ def init_engine(db_path: Path) -> Engine:
     return engine
 
 
+def _default_literal(column) -> str | None:
+    """SQL-Literal des Spalten-Defaults, oder None wenn nicht darstellbar.
+
+    Nur feste Werte lassen sich in ein ALTER TABLE schreiben. Ein Default, der
+    zur Laufzeit in Python berechnet wird (etwa ein Zeitstempel), kann SQLite
+    fuer bestehende Zeilen nicht erzeugen.
+    """
+    default = column.default
+    if default is None or not getattr(default, "is_scalar", False):
+        return None
+    value = default.arg
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    if isinstance(value, str):
+        return "'" + value.replace("'", "''") + "'"
+    return None
+
+
 def _add_missing_columns(engine: Engine) -> None:
     """Ergaenzt Spalten, die in den Modellen stehen, aber in der Datei fehlen.
 
@@ -55,9 +79,14 @@ def _add_missing_columns(engine: Engine) -> None:
     das hier muesste eine bestehende poc.db nach jeder Modellerweiterung
     geloescht werden - also samt aller bereits verfolgten Signale.
 
-    Bewusst eng gehalten: nur neue, NULL-erlaubende Spalten werden angelegt.
-    Geaenderte Typen, entfernte Spalten oder neue Constraints bleiben aussen vor
-    und brauchen weiterhin ein 'make reset'.
+    NULL-erlaubende Spalten kommen einfach dazu. Eine NOT-NULL-Spalte braucht
+    einen festen Default, den SQLite fuer die bestehenden Zeilen einsetzen kann;
+    fehlt der, bricht der Start mit einer lesbaren Meldung ab. Das ist der
+    Unterschied zu einem stillen Ueberspringen: danach schlaegt jede Abfrage
+    dieser Tabelle mit 'no such column' fehl, und die Ursache steht nirgends.
+
+    Geaenderte Typen, entfernte Spalten und neue Constraints deckt das nicht ab -
+    dafuer bleibt 'make reset'.
     """
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
@@ -69,20 +98,24 @@ def _add_missing_columns(engine: Engine) -> None:
         for column in table.columns:
             if column.name in present:
                 continue
+
+            ddl = f'"{column.name}" {column.type.compile(engine.dialect)}'
             if not column.nullable:
-                log.warning(
-                    "Spalte %s.%s fehlt, ist aber NOT NULL - automatisches "
-                    "Ergaenzen waere unsicher. Bitte 'make reset' ausfuehren.",
-                    table.name,
-                    column.name,
-                )
-                continue
-            ddl_type = column.type.compile(engine.dialect)
+                literal = _default_literal(column)
+                if literal is None:
+                    raise SchemaOutOfDate(
+                        f"Die Datenbank kennt die Spalte {table.name}.{column.name} "
+                        "noch nicht. Sie ist NOT NULL und hat keinen festen "
+                        "Standardwert, laesst sich also nicht nachtraeglich "
+                        "einfuegen.\n"
+                        "Abhilfe: 'make reset' loescht die Datenbank; Kurse holt "
+                        "'make backfill' zurueck, Earnings 'make seed'."
+                    )
+                ddl += f" NOT NULL DEFAULT {literal}"
+
             with engine.begin() as conn:
-                conn.execute(
-                    text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {ddl_type}')
-                )
-            log.info("Schema ergaenzt: %s.%s (%s)", table.name, column.name, ddl_type)
+                conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN {ddl}'))
+            log.info("Schema ergaenzt: %s.%s", table.name, column.name)
 
 
 def get_sessionmaker() -> sessionmaker[Session]:
