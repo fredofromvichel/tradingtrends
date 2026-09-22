@@ -52,6 +52,8 @@ class EarningsEvent(Base):
     period: Mapped[str | None] = mapped_column(String(16), default=None)
     # Meldezeitpunkt laut Finnhub: bmo | amc | dmh | None.
     report_hour: Mapped[str | None] = mapped_column(String(8), default=None)
+    # Welche Quelle das Event geliefert hat: finnhub | yahoo.
+    source: Mapped[str | None] = mapped_column(String(16), default=None)
     eps_estimate: Mapped[float | None] = mapped_column(Float, default=None)
     eps_actual: Mapped[float | None] = mapped_column(Float, default=None)
     # Als Bruch gespeichert: 0.05 == +5 %.

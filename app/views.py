@@ -136,6 +136,7 @@ def earnings_events(session: Session, limit: int = 200) -> list[dict]:
             "id": e.id,
             "symbol": e.symbol,
             "report_date": e.report_date.isoformat(),
+            "source": e.source,
             "period": e.period,
             "report_hour": e.report_hour,
             "eps_estimate": e.eps_estimate,

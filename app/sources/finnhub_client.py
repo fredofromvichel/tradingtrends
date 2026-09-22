@@ -25,6 +25,10 @@ from tenacity import (
     wait_exponential,
 )
 
+# Die Satzform ist quellenneutral und liegt deshalb nicht hier. Der Re-Export
+# haelt bestehende Importe aus diesem Modul gueltig.
+from app.sources.earnings import FINNHUB, RawEarnings  # noqa: F401
+
 log = logging.getLogger(__name__)
 
 BASE_URL = "https://finnhub.io/api/v1"
@@ -78,21 +82,6 @@ class Recommendation:
     @property
     def total(self) -> int:
         return self.strong_buy + self.buy + self.hold + self.sell + self.strong_sell
-
-
-@dataclass(frozen=True)
-class RawEarnings:
-    """Ein Earnings-Datensatz, quellenneutral normalisiert."""
-
-    symbol: str
-    report_date: dt.date
-    eps_estimate: float | None
-    eps_actual: float | None
-    # Von Finnhub geliefert, in Prozentpunkten (5.0 == 5 %). Nur Fallback.
-    surprise_percent: float | None
-    period: str | None
-    # "bmo" | "amc" | "dmh" | None - entscheidet ueber den Einstiegstag.
-    hour: str | None = None
 
 
 class FinnhubClient:

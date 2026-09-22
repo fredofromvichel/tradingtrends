@@ -6,9 +6,10 @@
 <section class="card">
   <h2>Erfasste Earnings-Events</h2>
   <p class="runinfo" style="margin:0">
-    Rohdaten aus Finnhub nach der Normalisierung. „Verarbeitet“ heißt: die Signal-Entscheidung
-    wurde getroffen – auch wenn sie „kein Signal“ lautete, weil die Überraschung innerhalb
-    der Schwellen lag. Nützlich, um zu prüfen, ob die Datenanbindung liefert.
+    Rohdaten nach der Normalisierung, unabhängig von der Quelle. Die Spalte „Quelle“ zeigt,
+    woher ein Event stammt: Finnhub, oder Yahoo als Ausweichquelle dort, wo Finnhubs Tarif
+    nicht greift. „Verarbeitet“ heißt: die Signal-Entscheidung wurde getroffen – auch wenn
+    sie „kein Signal“ lautete, weil die Überraschung innerhalb der Schwellen lag.
   </p>
 </section>
 
@@ -26,6 +27,7 @@
           <th class="num" title="Tatsächlich berichteter Gewinn je Aktie"><span>EPS tatsächlich</span></th>
           <th class="num" title="Abweichung zwischen erwartet und tatsächlich, in Prozent"><span>Surprise</span></th>
           <th class="num" title="Surprise geteilt durch die übliche Schwankung dieses Unternehmens. „–“ = weniger als vier Vorquartale bekannt."><span>SUE</span></th>
+          <th title="Woher das Event stammt. Yahoo springt ein, wo Finnhubs Tarif nicht greift."><span>Quelle</span></th>
           <th title="Signal-Entscheidung getroffen – auch wenn sie „kein Signal“ lautete"><span>Verarbeitet</span></th>
         </tr>
       </thead>
@@ -41,6 +43,7 @@
           <td class="num {{ 'pos' if (e.surprise_pct or 0) > 0 else ('neg' if e.surprise_pct else '') }}">
             {{ e.surprise_pct|pct(1) }}</td>
           <td class="num">{{ e.sue|sue }}</td>
+          <td class="muted">{{ {'finnhub':'Finnhub','yahoo':'Yahoo'}.get(e.source, '–') }}</td>
           <td>{{ 'ja' if e.processed else 'nein' }}</td>
         </tr>
       {% endfor %}

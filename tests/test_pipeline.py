@@ -757,3 +757,152 @@ def test_freigeschalteter_endpunkt_hebt_die_sperre_auf(settings, database, monke
         assert blocked_symbols(session) == []
     assert result.notes == []
     assert result.events_ingested == 1
+
+
+def test_gesperrter_titel_bekommt_earnings_von_der_ausweichquelle(
+    settings, database, monkeypatch, trading_days, report_date
+):
+    """Der eigentliche Zweck der Kette: 403 bei Finnhub darf den Titel nicht
+    dauerhaft ohne PEAD-Signale lassen."""
+    from app.models import EarningsEvent
+    from app.pipeline import run_daily
+    from app.sources.earnings import YAHOO, RawEarnings as SharedRaw
+
+    class ForbiddenFinnhub(FakeFinnhubBase):
+        def company_profile(self, symbol):
+            raise _forbidden("/stock/profile2")
+
+        def earnings_calendar(self, *_a, **_k):
+            raise _forbidden("/calendar/earnings")
+
+        def earnings_surprises(self, *_a, **_k):
+            raise _forbidden("/stock/earnings")
+
+        def recommendations(self, *_a, **_k):
+            raise _forbidden("/stock/recommendation")
+
+    def fake_yahoo(symbol, limit=24):
+        basis = report_date - dt.timedelta(days=365)
+        historie = [
+            SharedRaw(symbol, basis + dt.timedelta(days=90 * i), 1.00, 1.00 + s,
+                      s * 100, "hist", None, YAHOO)
+            for i, s in enumerate([0.01, -0.01, 0.02, 0.00])
+        ]
+        return [SharedRaw(symbol, report_date, 1.00, 1.20, 20.0,
+                          report_date.isoformat(), None, YAHOO)] + historie
+
+    def fake_fetch_prices(symbols, start, end):
+        return [
+            PriceRow(sym, d, 100.0, 101.0, 99.0, 100.0 + i, 1000)
+            for sym in symbols
+            for i, d in enumerate(trading_days)
+            if start <= d <= end
+        ], []
+
+    monkeypatch.setattr("app.pipeline.FinnhubClient", ForbiddenFinnhub)
+    monkeypatch.setattr("app.pipeline.fetch_prices", fake_fetch_prices)
+    monkeypatch.setattr("app.pipeline.yahoo_earnings.fetch_earnings", fake_yahoo)
+    monkeypatch.setattr(
+        "app.pipeline.yahoo_earnings.fetch_next_earnings_date", lambda s: None
+    )
+
+    result = run_daily(settings, trigger="test")
+
+    assert result.status == "OK", result.errors
+    assert result.events_ingested == 1
+    assert result.signals_opened == 1      # SUE über der Schwelle
+
+    with session_scope() as session:
+        event = session.scalar(select(EarningsEvent))
+        assert event.source == "yahoo"
+        assert event.report_hour is None   # unbekannt -> Einstieg am Folgetag
+        assert event.sue is not None and event.sue > 1.0
+
+        signal = session.scalar(select(Signal))
+        # Unbekannter Meldezeitpunkt: nie am Meldetag selbst einsteigen.
+        assert signal.entry_date > report_date
+
+
+def test_ausweichquelle_greift_auch_ohne_erneuten_finnhub_versuch(
+    settings, database, monkeypatch, trading_days, report_date
+):
+    """Beim zweiten Lauf ist Finnhub gesperrt - Yahoo muss trotzdem liefern."""
+    from app.pipeline import run_daily
+    from app.sources.earnings import YAHOO, RawEarnings as SharedRaw
+
+    finnhub_calls: list[str] = []
+    yahoo_calls: list[str] = []
+
+    class ForbiddenFinnhub(FakeFinnhubBase):
+        def company_profile(self, symbol):
+            finnhub_calls.append("profile")
+            raise _forbidden("/stock/profile2")
+
+        def earnings_calendar(self, *_a, **_k):
+            finnhub_calls.append("calendar")
+            raise _forbidden("/calendar/earnings")
+
+        def earnings_surprises(self, *_a, **_k):
+            finnhub_calls.append("earnings")
+            raise _forbidden("/stock/earnings")
+
+        def recommendations(self, *_a, **_k):
+            finnhub_calls.append("reco")
+            raise _forbidden("/stock/recommendation")
+
+    def fake_yahoo(symbol, limit=24):
+        yahoo_calls.append(symbol)
+        return [SharedRaw(symbol, report_date, 1.00, 1.20, 20.0, "q", None, YAHOO)]
+
+    monkeypatch.setattr("app.pipeline.FinnhubClient", ForbiddenFinnhub)
+    monkeypatch.setattr("app.pipeline.fetch_prices", lambda s, a, b: ([], []))
+    monkeypatch.setattr("app.pipeline.yahoo_earnings.fetch_earnings", fake_yahoo)
+    monkeypatch.setattr(
+        "app.pipeline.yahoo_earnings.fetch_next_earnings_date", lambda s: None
+    )
+
+    run_daily(settings, trigger="test")
+    finnhub_nach_erstem = len(finnhub_calls)
+
+    run_daily(settings, trigger="test")
+
+    assert len(finnhub_calls) == finnhub_nach_erstem   # keine neuen Fehlversuche
+    assert len(yahoo_calls) == 2                       # Ausweichquelle läuft weiter
+
+
+def test_abgeschaltete_ausweichquelle_laesst_den_titel_leer(
+    settings, database, monkeypatch, report_date
+):
+    import dataclasses
+
+    from app.models import EarningsEvent
+    from app.pipeline import run_daily
+
+    class ForbiddenFinnhub(FakeFinnhubBase):
+        def company_profile(self, symbol):
+            raise _forbidden("/stock/profile2")
+
+        def earnings_calendar(self, *_a, **_k):
+            raise _forbidden("/calendar/earnings")
+
+        def earnings_surprises(self, *_a, **_k):
+            raise _forbidden("/stock/earnings")
+
+        def recommendations(self, *_a, **_k):
+            raise _forbidden("/stock/recommendation")
+
+    def darf_nicht_aufgerufen_werden(*_a, **_k):
+        raise AssertionError("Ausweichquelle trotz earnings_fallback_enabled=False")
+
+    monkeypatch.setattr("app.pipeline.FinnhubClient", ForbiddenFinnhub)
+    monkeypatch.setattr("app.pipeline.fetch_prices", lambda s, a, b: ([], []))
+    monkeypatch.setattr(
+        "app.pipeline.yahoo_earnings.fetch_earnings", darf_nicht_aufgerufen_werden
+    )
+
+    aus = dataclasses.replace(settings, earnings_fallback_enabled=False)
+    result = run_daily(aus, trigger="test")
+
+    assert result.status == "OK"
+    with session_scope() as session:
+        assert session.scalar(select(EarningsEvent)) is None

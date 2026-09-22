@@ -307,6 +307,32 @@ Monats.
 > anderen unten, ohne dass das etwas mit dem Faktor zu tun hätte. Die Zahlen
 > prüfen die Mechanik; sie belegen den Faktor nicht.
 
+### Ausweichquelle: Yahoo springt ein, wo Finnhub nicht darf
+
+Findet die Pipeline einen Titel bei Finnhub gesperrt, holt sie die Earnings
+stattdessen über **yfinance** — dieselbe Quelle, die schon die Kurse liefert.
+Sie gibt Meldedatum, EPS-Schätzung, tatsächliches EPS und Surprise in *einem*
+Abruf, oft über 25 Quartale; Finnhub braucht für weniger zwei Aufrufe. Damit
+bekommen auch europäische Titel PEAD-Signale.
+
+Finnhub bleibt trotzdem die erste Wahl, wo es antwortet — nur dort ist der
+Meldezeitpunkt (`bmo`/`amc`) belastbar. Yahoo gibt alle Zeitstempel in New
+Yorker Zeit aus: bei `AAPL` um 16:00 ET ist „nach Börsenschluss" eindeutig,
+bei `SAP.DE` um „20:00 ET" ist der Wert eine Umrechnung, aus der sich die
+Frankfurter Meldezeit nicht rekonstruieren lässt. Für nicht-amerikanische
+Titel bleibt der Zeitpunkt deshalb **unbekannt** — und die Signal-Logik steigt
+dann grundsätzlich erst am Folgetag ein. Das ist in beiden möglichen Lesarten
+des Datums sicher: ein zu früher Einstieg, der den Kurssprung vorwegnähme,
+ist ausgeschlossen.
+
+Welche Quelle ein Event geliefert hat, steht in `earnings_events.source` und
+als Spalte auf `/events`. Abschalten mit `earnings_fallback_enabled: false`.
+
+**Was die Ausweichquelle nicht löst:** yfinance ist ein inoffizieller
+Yahoo-Scraper ohne Zusage. Das gilt schon für die Kurse — jetzt hängen beide
+Datenarten daran. Und die Abdeckung schwankt: manche Titel liefern 25
+Quartale, andere sieben mit Lücken.
+
 ### Wenn Finnhub einen Titel nicht abdeckt
 
 Der Free-Tier liefert Earnings praktisch nur für US-gelistete Titel. Bei allen
@@ -535,7 +561,7 @@ app/
 | `analyst_recommendations` | `id`, unique `(symbol, period)` | Verteilung Kaufen/Halten/Verkaufen je Monat |
 | `momentum_rebalances` | `id`, unique `period_key` | Eine Umschichtung: Formationsfenster, Universumsgröße |
 | `momentum_signals` | `id`, unique `(rebalance_id, symbol)` | Position aus dem Korb, getrennt von `signals` |
-| `earnings_events` | `id`, unique `(symbol, report_date)` | EPS, `surprise_pct`, `sue`, `report_hour`, `processed` |
+| `earnings_events` | `id`, unique `(symbol, report_date)` | EPS, `surprise_pct`, `sue`, `report_hour`, `source`, `processed` |
 | `prices` | `(symbol, date)` | Tages-OHLCV, bereinigt |
 | `signals` | `id`, unique `earnings_event_id` | Ein- und Ausstieg, Status, `return_pct` |
 | `pipeline_runs` | `id` | Protokoll je Lauf, Basis der Statusanzeige |
@@ -548,7 +574,7 @@ app/
 make test
 ```
 
-170 Tests, ohne Netzzugriff:
+188 Tests, ohne Netzzugriff:
 
 * `tests/test_signals.py` — Surprise, SUE, Schwellenwerte, Short-Rendite,
   Handelstags-Arithmetik über Wochenenden, Einstiegstag je Meldezeitpunkt.

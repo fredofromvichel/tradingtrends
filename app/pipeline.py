@@ -42,6 +42,8 @@ from app.sources.finnhub_client import (
     RawEarnings,
 )
 from app import coverage
+from app.sources.earnings import FINNHUB, YAHOO
+from app.sources import yahoo_earnings
 from app.sources.prices import fetch_prices
 
 log = logging.getLogger(__name__)
@@ -359,6 +361,12 @@ def _ingest_outlook(settings: Settings) -> None:
                 except (FinnhubError, FinnhubTransientError) as exc:
                     failures.setdefault(symbol, []).append(f"Empfehlungen ({exc})")
 
+            if next_date is None and settings.earnings_fallback_enabled:
+                try:
+                    next_date = yahoo_earnings.fetch_next_earnings_date(symbol)
+                except yahoo_earnings.YahooEarningsError as exc:
+                    log.debug("Termin ueber Ausweichquelle fuer %s: %s", symbol, exc)
+
             with session_scope() as session:
                 row = session.get(Ticker, symbol)
                 if row is not None:
@@ -413,20 +421,39 @@ def _ingest_earnings(settings: Settings, result: RunResult) -> None:
         symbols = _active_symbols(session)
 
     failures: dict[str, list[str]] = {}
+    fallback_used: set[str] = set()
     with FinnhubClient(
         settings.finnhub_api_key,
         min_interval_seconds=settings.finnhub_min_interval_seconds,
     ) as client:
         for symbol in symbols:
             with session_scope() as session:
-                if coverage.should_skip(
+                gesperrt = coverage.should_skip(
                     session, symbol, EARNINGS_ENDPOINT, settings.finnhub_recheck_days
                 ) and coverage.should_skip(
                     session, symbol, CALENDAR_ENDPOINT, settings.finnhub_recheck_days
-                ):
+                )
+            if gesperrt:
+                # Finnhub ist fuer diesen Titel gesperrt - direkt ausweichen,
+                # ohne den aussichtslosen Versuch.
+                if not settings.earnings_fallback_enabled:
                     continue
+                try:
+                    yahoo = yahoo_earnings.fetch_earnings(symbol)
+                except yahoo_earnings.YahooEarningsError as exc:
+                    failures.setdefault(symbol, []).append(f"Ausweichquelle ({exc})")
+                    continue
+                if yahoo:
+                    fallback_used.add(symbol)
+                    for raw in yahoo:
+                        if not (date_from <= raw.report_date <= date_to):
+                            continue
+                        if _store_event(settings, raw, yahoo):
+                            result.events_ingested += 1
+                continue
 
             history: list[RawEarnings] = []
+            finnhub_blocked = False
             try:
                 history = client.earnings_surprises(symbol)
                 with session_scope() as session:
@@ -436,6 +463,7 @@ def _ingest_earnings(settings: Settings, result: RunResult) -> None:
                 # waeren nur verschwendete Zeit.
                 raise RuntimeError(str(exc)) from exc
             except FinnhubForbiddenError as exc:
+                finnhub_blocked = True
                 with session_scope() as session:
                     coverage.record_block(session, symbol, exc.endpoint)
             except (FinnhubError, FinnhubTransientError) as exc:
@@ -448,17 +476,25 @@ def _ingest_earnings(settings: Settings, result: RunResult) -> None:
             except FinnhubAuthError as exc:
                 raise RuntimeError(str(exc)) from exc
             except FinnhubForbiddenError as exc:
+                finnhub_blocked = True
                 with session_scope() as session:
                     coverage.record_block(session, symbol, exc.endpoint)
-                # Kalender gesperrt -> Naeherung ueber die Historie.
-                events = [e for e in history if date_from <= e.report_date <= date_to]
-                if events:
-                    log.info(
-                        "%s: nutze Fiskalperiode als Naeherung fuer das Meldedatum.", symbol
-                    )
+                events = []
             except FinnhubTransientError as exc:
                 failures.setdefault(symbol, []).append(f"Kalender ({exc})")
                 continue
+
+            # Ausweichquelle: liefert Meldedatum und Historie in einem Abruf.
+            if finnhub_blocked and settings.earnings_fallback_enabled:
+                try:
+                    yahoo = yahoo_earnings.fetch_earnings(symbol)
+                except yahoo_earnings.YahooEarningsError as exc:
+                    failures.setdefault(symbol, []).append(f"Ausweichquelle ({exc})")
+                    yahoo = []
+                if yahoo:
+                    history = yahoo
+                    events = [e for e in yahoo if date_from <= e.report_date <= date_to]
+                    fallback_used.add(symbol)
 
             for raw in events:
                 if raw.eps_actual is None:
@@ -466,6 +502,13 @@ def _ingest_earnings(settings: Settings, result: RunResult) -> None:
                     continue
                 if _store_event(settings, raw, history):
                     result.events_ingested += 1
+
+    if fallback_used:
+        log.info(
+            "Earnings ueber die Ausweichquelle fuer %d Titel: %s",
+            len(fallback_used),
+            ", ".join(sorted(fallback_used)),
+        )
 
     if failures:
         details = "; ".join(
@@ -513,6 +556,7 @@ def _store_event(settings: Settings, raw: RawEarnings, history: list[RawEarnings
                 report_date=raw.report_date,
                 period=raw.period,
                 report_hour=raw.hour,
+                source=raw.source,
                 eps_estimate=raw.eps_estimate,
                 eps_actual=raw.eps_actual,
                 surprise_pct=surprise_pct,

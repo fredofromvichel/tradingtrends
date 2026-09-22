@@ -69,6 +69,8 @@ class Settings:
     log_level: str = "INFO"
     outlook_max_age_days: int = 3
     finnhub_recheck_days: int = 14
+    # Yahoo als Ausweichquelle, wo Finnhubs Tarif nicht greift.
+    earnings_fallback_enabled: bool = True
     schedule: Schedule = field(default_factory=Schedule)
     research: Research = field(default_factory=Research)
     momentum: Momentum = field(default_factory=Momentum)
@@ -164,6 +166,9 @@ def load_settings(path: Path | None = None) -> Settings:
         log_level=(os.getenv("LOG_LEVEL") or "INFO").upper(),
         outlook_max_age_days=int(raw.get("outlook_max_age_days", 3)),
         finnhub_recheck_days=int(raw.get("finnhub_recheck_days", 14)),
+        earnings_fallback_enabled=_as_bool(
+            str(raw.get("earnings_fallback_enabled", True)), True
+        ),
         schedule=schedule,
         research=research,
         momentum=momentum,

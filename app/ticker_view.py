@@ -213,6 +213,7 @@ def ticker_detail(session: Session, settings: Settings, symbol: str) -> TickerDe
             "id": e.id,
             "report_date": e.report_date.isoformat(),
             "report_hour": e.report_hour,
+            "source": e.source,
             "period": e.period,
             "eps_estimate": e.eps_estimate,
             "eps_actual": e.eps_actual,
