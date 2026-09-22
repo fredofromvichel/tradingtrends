@@ -86,12 +86,12 @@ def main(argv: list[str]) -> int:
     shutil.copy2(new_path, backup)
     new_path.write_text("".join(merged), encoding="utf-8")
 
+    start, end = ticker_block(merged, str(new_path))
     taken = [
-        line.strip().lstrip("-").strip()
-        for line in merged[
-            ticker_block(merged, str(new_path))[0] + 1:
-            ticker_block(merged, str(new_path))[1]
-        ]
+        # Inline-Kommentar abschneiden, sonst steht er im Bericht als Teil
+        # des Symbols.
+        line.strip().lstrip("-").split("#")[0].strip()
+        for line in merged[start + 1:end]
         if line.strip().startswith("-")
     ]
     print(f"{len(taken)} Ticker uebernommen: {', '.join(taken)}")

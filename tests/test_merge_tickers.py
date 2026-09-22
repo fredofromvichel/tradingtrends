@@ -145,3 +145,16 @@ def test_gegen_die_echte_config(tmp_path: Path):
     for key in ("momentum", "research", "schedule", "price_backfill_days",
                 "holding_period_days", "sue_threshold_buy"):
         assert key in data, key
+
+
+def test_bericht_schneidet_inline_kommentare_ab(tmp_path: Path, capsys):
+    """Sonst steht der Kommentar im Bericht als Teil des Symbols."""
+    alt = write(tmp_path, "alt.yaml", "tickers:\n  - NVDA   # NVD · NVIDIA\n  - SAP.DE\n")
+    neu = write(tmp_path, "neu.yaml", NEU)
+
+    merge_tickers.main(["x", str(alt), str(neu)])
+
+    ausgabe = capsys.readouterr().out
+    assert "2 Ticker uebernommen: NVDA, SAP.DE" in ausgabe
+    # Der Kommentar bleibt in der Datei selbst erhalten.
+    assert "# NVD · NVIDIA" in neu.read_text(encoding="utf-8")
