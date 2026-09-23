@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Nicht ausgeführt · PEAD-Signal-POC{% endblock %}
+{% block content %}
+<section class="card">
+  <h2>Die Änderung wurde nicht ausgeführt</h2>
+  {% if reason == 'herkunft' %}
+    <p>Die Anfrage kam nicht von einer Seite dieser Anwendung. Das passiert, wenn
+    eine fremde Webseite versucht, hier etwas auszulösen – oder wenn ein
+    Browser-Add-on Anfragen umleitet.</p>
+  {% else %}
+    <p>Das Formular ist abgelaufen. Das ist nach jedem Neustart des Containers so
+    und kein Fehler: Seite neu laden und noch einmal abschicken.</p>
+  {% endif %}
+  <p><a href="/titel">Zur Titelliste</a> · <a href="/">Zur Übersicht</a></p>
+</section>
+{% endblock %}

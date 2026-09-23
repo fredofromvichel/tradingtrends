@@ -7,11 +7,12 @@ import logging
 import threading
 from dataclasses import dataclass, field
 
-from sqlalchemy import select
+import pytz
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.db import session_scope, sync_tickers
+from app.db import session_scope
 from app.models import (
     AnalystRecommendation,
     EarningsEvent,
@@ -45,8 +46,18 @@ from app import coverage
 from app.sources.earnings import FINNHUB, YAHOO
 from app.sources import yahoo_earnings
 from app.sources.prices import fetch_prices
+from app.watchlist import seed_tickers
 
 log = logging.getLogger(__name__)
+
+# Unterhalb dieser Zahl an Kurstagen holt der Lauf die volle Historie statt
+# des kurzen Aktualisierungsfensters. Faengt neue Titel ab und solche, die
+# vor dieser Version nur mit einer Woche Historie aufgenommen wurden.
+MIN_ROWS_BEFORE_REFRESH = 60
+
+# Ab dieser Uhrzeit (deutsche Zeit) gilt der heutige Kurs als Schlusskurs.
+DAY_COMPLETE_AFTER = dt.time(22, 15)
+BERLIN = pytz.timezone("Europe/Berlin")
 
 # Endpunktpfade - muessen zu denen im Finnhub-Client passen.
 PROFILE_ENDPOINT = "/stock/profile2"
@@ -112,7 +123,13 @@ def run_daily(
     """
     if not _run_lock.acquire(blocking=False):
         raise PipelineBusy("Es laeuft bereits ein Pipeline-Durchlauf.")
+    return _run_locked(settings, trigger, force_price_backfill=force_price_backfill)
 
+
+def _run_locked(
+    settings: Settings, trigger: str, *, force_price_backfill: bool = False
+) -> RunResult:
+    """Der eigentliche Lauf. Erwartet ``_run_lock`` gehalten und gibt ihn frei."""
     result = RunResult(trigger=trigger, started_at=dt.datetime.now(dt.timezone.utc))
     run_id: int | None = None
     try:
@@ -121,7 +138,8 @@ def run_daily(
             session.add(run)
             session.flush()
             run_id = run.id
-            sync_tickers(session, settings.tickers)
+            # Nur bei leerer DB wirksam; danach pflegt die Oberflaeche die Liste.
+            seed_tickers(session, settings.tickers)
 
         log.info("Pipeline-Lauf gestartet (trigger=%s, run_id=%s)", trigger, run_id)
 
@@ -176,6 +194,63 @@ def run_daily(
         result.momentum_closed,
     )
     return result
+
+
+# -- Lauf nach einer Aenderung der Titelliste --------------------------------
+
+_queue_lock = threading.Lock()
+_queued = False
+# Laenger als ein Lauf je dauern sollte; danach gibt der Wartende auf, statt
+# einen haengenden Lauf ewig zu blockieren.
+WAIT_FOR_RUN_SECONDS = 30 * 60
+
+
+def request_background_run(settings: Settings, trigger: str = "titel") -> bool:
+    """Startet einen Lauf im Hintergrund - oder haengt sich an einen wartenden.
+
+    Ein neu aufgenommener Titel soll nicht bis 22:30 ohne Daten dastehen. Der
+    Lauf wartet, falls gerade einer laeuft, statt abzubrechen: der laufende
+    hat die Aenderung womoeglich nur zur Haelfte gesehen. Mehrere Aenderungen
+    kurz hintereinander teilen sich einen Lauf.
+
+    Rueckgabe: True, wenn ein neuer Lauf eingereiht wurde.
+    """
+    global _queued
+    with _queue_lock:
+        if _queued:
+            return False
+        _queued = True
+    threading.Thread(
+        target=_background_worker, args=(settings, trigger), name="titel-lauf", daemon=True
+    ).start()
+    return True
+
+
+def _background_worker(settings: Settings, trigger: str) -> None:
+    global _queued
+    if not _run_lock.acquire(timeout=WAIT_FOR_RUN_SECONDS):
+        log.error("Hintergrundlauf aufgegeben - ein anderer Lauf blockiert seit %d min.",
+                  WAIT_FOR_RUN_SECONDS // 60)
+        with _queue_lock:
+            _queued = False
+        return
+    # Erst jetzt, mit dem Lock in der Hand: was ab hier geaendert wird, sieht
+    # dieser Lauf moeglicherweise nicht mehr vollstaendig - also neu einreihen.
+    with _queue_lock:
+        _queued = False
+    try:
+        _run_locked(settings, trigger)
+    except Exception:  # pragma: no cover - der Thread darf nichts verschlucken
+        log.exception("Hintergrundlauf fehlgeschlagen")
+
+
+def background_state() -> str | None:
+    """'queued', 'running' oder None - fuer den Ladehinweis in der Oberflaeche."""
+    if _queued:
+        return "queued"
+    if _run_lock.locked():
+        return "running"
+    return None
 
 
 def _step(result: RunResult, label: str, func) -> None:
@@ -590,16 +665,47 @@ def _ingest_prices(
 ) -> None:
     today = dt.date.today()
     with session_scope() as session:
-        symbols = _active_symbols(session)
-        has_prices = session.scalar(select(Price.symbol).limit(1)) is not None
+        symbols = _price_symbols(session)
+        counts = dict(
+            session.execute(
+                select(Price.symbol, func.count()).group_by(Price.symbol)
+            ).all()
+        )
 
-    use_short_window = has_prices and not force_backfill
-    window = settings.price_refresh_days if use_short_window else settings.price_backfill_days
-    start = today - dt.timedelta(days=window)
-    log.info("Kursabruf fuer %d Symbole ab %s", len(symbols), start)
+    # Das Fenster richtet sich nach dem einzelnen Titel, nicht nach der
+    # Datenbank: ein neu aufgenommener Titel braucht die volle Historie,
+    # auch wenn alle anderen laengst welche haben.
+    if force_backfill:
+        backfill, refresh = list(symbols), []
+    else:
+        backfill = [s for s in symbols if counts.get(s, 0) < MIN_ROWS_BEFORE_REFRESH]
+        refresh = [s for s in symbols if counts.get(s, 0) >= MIN_ROWS_BEFORE_REFRESH]
 
-    rows, missing = fetch_prices(list(symbols), start, today)
+    rows = []
+    missing: list[str] = []
+    for group, window in (
+        (backfill, settings.price_backfill_days),
+        (refresh, settings.price_refresh_days),
+    ):
+        if not group:
+            continue
+        start = today - dt.timedelta(days=window)
+        log.info("Kursabruf fuer %d Symbole ab %s", len(group), start)
+        fetched, lost = fetch_prices(list(group), start, today)
+        rows.extend(fetched)
+        missing.extend(lost)
     result.prices_fetched += len(rows)
+
+    # Waehrend des Handels liefert Yahoo fuer heute einen Zwischenstand, der
+    # wie ein Schlusskurs aussieht. Schloesse ein Lauf damit eine Position,
+    # bliebe deren Rendite auf dem Zwischenstand stehen - der echte
+    # Schlusskurs korrigiert spaeter nur die Kurszeile, nicht den Trade.
+    if not trading_day_complete():
+        vorher = len(rows)
+        rows = [row for row in rows if row.date < today]
+        if len(rows) < vorher:
+            log.info("Kurse von heute zurueckgestellt, Handel laeuft noch (%d Zeilen).",
+                     vorher - len(rows))
 
     written = 0
     with session_scope() as session:
@@ -978,6 +1084,34 @@ def _rebalance_momentum(settings: Settings, result: RunResult) -> None:
 # ---------------------------------------------------------------------------
 # Hilfsfunktionen
 # ---------------------------------------------------------------------------
+
+
+def trading_day_complete(now: dt.datetime | None = None) -> bool:
+    """Haben alle beobachteten Boersen fuer heute geschlossen?
+
+    Massgeblich ist der spaeteste Handelsschluss, New York um 16:00 Ortszeit.
+    Er liegt um 22:00 deutscher Zeit, in den Wochen der versetzten
+    Zeitumstellung um 21:00 - 22:15 deckt beides mit Puffer ab.
+    """
+    now = now or dt.datetime.now(BERLIN)
+    return now.astimezone(BERLIN).time() >= DAY_COMPLETE_AFTER
+
+
+def _price_symbols(session: Session) -> list[str]:
+    """Titel, fuer die Kurse gebraucht werden.
+
+    Die beobachteten Titel - und dazu jeder, auf dem noch eine Position offen
+    ist. Wer einen Titel mit laufendem Signal entfernt, beendet damit die
+    Beobachtung, nicht den Trade: ohne weitere Kurse schloesse die Position nie.
+    """
+    offen = set(
+        session.scalars(select(Signal.symbol).where(Signal.status == OPEN)).all()
+    ) | set(
+        session.scalars(
+            select(MomentumSignal.symbol).where(MomentumSignal.status == OPEN)
+        ).all()
+    )
+    return sorted(set(_active_symbols(session)) | offen)
 
 
 def _active_symbols(session: Session) -> list[str]:

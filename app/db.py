@@ -7,11 +7,11 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from sqlalchemy import create_engine, event, inspect, select, text
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.models import Base, Ticker
+from app.models import Base
 
 log = logging.getLogger(__name__)
 
@@ -137,28 +137,3 @@ def session_scope() -> Iterator[Session]:
         raise
     finally:
         session.close()
-
-
-def sync_tickers(session: Session, symbols: tuple[str, ...]) -> None:
-    """Gleicht die Ticker-Tabelle an config.yaml an.
-
-    Symbole, die aus der Konfiguration verschwinden, werden auf active=False
-    gesetzt statt geloescht - sonst wuerden Fremdschluessel bestehender
-    Signale ins Leere zeigen.
-    """
-    existing = {t.symbol: t for t in session.scalars(select(Ticker)).all()}
-    wanted = set(symbols)
-
-    for symbol in symbols:
-        row = existing.get(symbol)
-        if row is None:
-            session.add(Ticker(symbol=symbol, active=True))
-            log.info("Neuer Ticker aufgenommen: %s", symbol)
-        elif not row.active:
-            row.active = True
-            log.info("Ticker reaktiviert: %s", symbol)
-
-    for symbol, row in existing.items():
-        if symbol not in wanted and row.active:
-            row.active = False
-            log.info("Ticker deaktiviert (nicht mehr in config.yaml): %s", symbol)

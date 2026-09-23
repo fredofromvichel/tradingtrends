@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import market_context, momentum_view, views
+from app import market_context, momentum_view, views, watchlist
 from app.config import Settings
 from app.models import Ticker
 
@@ -94,7 +94,7 @@ def build(session: Session, settings: Settings) -> Dashboard:
         momentum_summary=momentum_view.summary(session),
         upcoming=upcoming,
         ending_soon=ending_soon,
-        ticker_count=len(settings.tickers),
+        ticker_count=len(watchlist.active_symbols(session)),
         upcoming_days=UPCOMING_DAYS,
         ending_soon_days=ENDING_SOON_DAYS,
     )

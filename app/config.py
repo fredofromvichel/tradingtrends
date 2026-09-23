@@ -52,6 +52,8 @@ class Research:
 
 @dataclass(frozen=True)
 class Settings:
+    # Startliste fuer eine leere Datenbank. Beobachtet wird, was in der
+    # Tabelle tickers aktiv ist - siehe app/watchlist.py.
     tickers: tuple[str, ...]
     finnhub_api_key: str
     db_path: Path
@@ -101,8 +103,8 @@ def load_settings(path: Path | None = None) -> Settings:
     tickers = [str(t).strip().upper() for t in raw.get("tickers") or [] if str(t).strip()]
     # Reihenfolge erhalten, Duplikate entfernen.
     tickers = list(dict.fromkeys(tickers))
-    if not tickers:
-        raise ConfigError("In config.yaml ist kein einziger Ticker eingetragen.")
+    # Leer ist erlaubt: die Liste ist nur die Startliste fuer eine leere
+    # Datenbank, gepflegt wird sie in der Oberflaeche (app/watchlist.py).
 
     api_key = (os.getenv("FINNHUB_API_KEY") or "").strip()
     if not api_key:
@@ -232,12 +234,6 @@ def _validate(s: Settings) -> None:
             raise ConfigError(
                 "momentum.min_universe muss mindestens 4 sein - darunter besteht "
                 "jede Gruppe aus einem einzigen Titel."
-            )
-        if len(s.tickers) < m.min_universe:
-            raise ConfigError(
-                f"momentum ist aktiv, aber es sind nur {len(s.tickers)} Ticker "
-                f"konfiguriert (mindestens {m.min_universe} noetig). Entweder mehr "
-                "Titel eintragen oder momentum.enabled auf false setzen."
             )
         # Formationsfenster in Kalendertage umrechnen: rund 1.45 Kalendertage
         # je Handelstag, plus Puffer.

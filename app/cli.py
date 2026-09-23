@@ -15,7 +15,7 @@ import datetime as dt
 import sys
 
 from app.config import ConfigError, load_settings
-from app.db import init_engine, session_scope, sync_tickers
+from app.db import init_engine, session_scope
 from app.logging_conf import configure_logging
 from app.momentum import required_history
 from app.momentum_view import readiness
@@ -26,6 +26,7 @@ from app.sources.finnhub_client import (
     FinnhubTransientError,
 )
 from app.views import summary
+from app.watchlist import active_symbols, seed_tickers
 
 
 def _prepare():
@@ -33,8 +34,13 @@ def _prepare():
     configure_logging(settings.log_level)
     init_engine(settings.db_path)
     with session_scope() as session:
-        sync_tickers(session, settings.tickers)
+        seed_tickers(session, settings.tickers)
     return settings
+
+
+def _watched() -> list[str]:
+    with session_scope() as session:
+        return active_symbols(session)
 
 
 def _print_summary(result) -> None:
@@ -56,14 +62,18 @@ def cmd_run(_args) -> int:
 
 
 def cmd_check(_args) -> int:
-    settings = load_settings()
-    configure_logging(settings.log_level)
-    print(f"Konfiguration OK. {len(settings.tickers)} Ticker: {', '.join(settings.tickers)}")
+    settings = _prepare()
+    symbols = _watched()
+    print("Konfiguration OK.")
+    print(f"Beobachtet: {len(symbols)} Titel: {', '.join(symbols) or '-'}")
     print(f"Datenbank: {settings.db_path}")
     print(f"Scheduler: {'an' if settings.schedule.enabled else 'aus'} "
           f"({settings.schedule.cron}, {settings.schedule.timezone})")
 
-    probe = settings.tickers[0]
+    # Ein US-Titel eignet sich als Probe am besten: nur dort liefert Finnhub
+    # im freien Tarif Earnings. Ohne Titel pruefen wir mit einem bekannten.
+    us = [s for s in symbols if "." not in s]
+    probe = (us or symbols or ["AAPL"])[0]
     today = dt.date.today()
     with FinnhubClient(
         settings.finnhub_api_key,
@@ -126,13 +136,13 @@ def cmd_seed(args) -> int:
         price_backfill_days=backfill,
     )
 
-    print(f"Seed-Lauf: Earnings der letzten {args.days} Tage, "
-          f"Kurshistorie {backfill} Tage, {len(seeded.tickers)} Ticker.")
-    print("Das kann ein bis zwei Minuten dauern (zwei Finnhub-Requests je Ticker).")
-
     init_engine(seeded.db_path)
     with session_scope() as session:
-        sync_tickers(session, seeded.tickers)
+        seed_tickers(session, seeded.tickers)
+
+    print(f"Seed-Lauf: Earnings der letzten {args.days} Tage, "
+          f"Kurshistorie {backfill} Tage, {len(_watched())} Titel.")
+    print("Das kann ein bis zwei Minuten dauern (zwei Finnhub-Requests je Ticker).")
 
     result = run_daily(seeded, trigger="seed", force_price_backfill=True)
     _print_summary(result)
@@ -181,7 +191,7 @@ def cmd_backfill(_args) -> int:
     """
     settings = _prepare()
     print(f"Lade Kurshistorie der letzten {settings.price_backfill_days} Kalendertage "
-          f"fuer {len(settings.tickers)} Ticker ...")
+          f"fuer {len(_watched())} Titel ...")
 
     result = RunResult(trigger="backfill", started_at=dt.datetime.now(dt.timezone.utc))
     try:

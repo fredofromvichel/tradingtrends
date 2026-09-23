@@ -71,10 +71,12 @@ shell:
 
 test:
 	$(COMPOSE) run --rm --no-deps -e FINNHUB_API_KEY=test -v "$(PWD)/tests:/app/tests:ro" \
-		-v "$(PWD)/pytest.ini:/app/pytest.ini:ro" -v "$(PWD)/tools:/app/tools:ro" \
+		-v "$(PWD)/pytest.ini:/app/pytest.ini:ro" \
 		--entrypoint sh app -c "pip install --quiet --root-user-action=ignore pytest && python -m pytest"
 
 reset:
+	@echo "Mit der Datenbank geht auch die Titelliste. Sichern: /titel -> 'Liste sichern',"
+	@echo "den Block in config.yaml einfuegen - er ist die Startliste einer leeren Datenbank."
 	@read -p "Datenbank ./data/poc.db wirklich loeschen? [j/N] " a; \
 	 if [ "$$a" = "j" ] || [ "$$a" = "J" ]; then \
 	   $(COMPOSE) down; rm -f data/poc.db data/poc.db-wal data/poc.db-shm; \

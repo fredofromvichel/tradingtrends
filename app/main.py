@@ -6,25 +6,44 @@ import datetime as dt
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlencode
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi import Path as PathParam
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
-from app import access, dashboard, momentum_view, ticker_view, views
+from app import (
+    access,
+    csrf,
+    dashboard,
+    momentum_view,
+    symbols,
+    ticker_view,
+    views,
+    watchlist,
+    watchlist_view,
+)
 from app.config import Settings, load_settings
-from app.db import get_sessionmaker, init_engine, session_scope, sync_tickers
+from app.db import get_sessionmaker, init_engine, session_scope
 from app.logging_conf import configure_logging
-from app.pipeline import PipelineBusy, run_daily
+from app.pipeline import (
+    PipelineBusy,
+    background_state,
+    request_background_run,
+    run_daily,
+)
 from app.scheduler import start_scheduler
 
 log = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+templates.env.globals["csrf_token"] = csrf.token
+templates.env.globals["csrf_field"] = csrf.FIELD
 
 STATE: dict[str, object] = {}
 
@@ -49,11 +68,21 @@ def get_session():
 async def lifespan(app: FastAPI):
     settings = load_settings()
     configure_logging(settings.log_level)
-    log.info("PEAD-Signal-POC startet - %d Ticker konfiguriert.", len(settings.tickers))
+    log.info("PEAD-Signal-POC startet.")
 
     init_engine(settings.db_path)
     with session_scope() as session:
-        sync_tickers(session, settings.tickers)
+        seed = watchlist.seed_tickers(session, settings.tickers)
+        beobachtet = len(watchlist.active_symbols(session))
+    log.info("%d Titel in Beobachtung.", beobachtet)
+    if seed.ignored:
+        # Wer config.yaml bearbeitet, soll erfahren, dass die Datei nicht mehr wirkt.
+        log.info(
+            "config.yaml nennt %d Titel, die nicht beobachtet werden (%s). Die Liste "
+            "wird in der Oberflaeche unter /titel gepflegt; config.yaml gilt nur "
+            "fuer eine leere Datenbank.",
+            len(seed.ignored), ", ".join(seed.ignored[:8]),
+        )
 
     if access.enforcement_needed(settings.bind_addr):
         networks = access.parse_allowlist(settings.allowed_ips)
@@ -92,6 +121,42 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="PEAD-Signal-POC", version="1.0.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
+
+def _rejected(request: Request, reason: str) -> object:
+    return templates.TemplateResponse(
+        request=request,
+        name="rejected.html",
+        context={"reason": reason},
+        status_code=403,
+    )
+
+
+@app.middleware("http")
+async def check_origin(request: Request, call_next):
+    """Schreibende Anfragen nur von Seiten dieser Anwendung (siehe app/csrf.py).
+
+    Vor restrict_by_ip registriert, damit die IP-Sperre aussen liegt und
+    zuerst greift.
+    """
+    if csrf.origin_ok(request.method, request.headers):
+        return await call_next(request)
+    log.warning(
+        "Schreibzugriff fremder Herkunft abgewiesen: %s %s (Origin %s, Referer %s)",
+        request.method, request.url.path,
+        request.headers.get("origin"), request.headers.get("referer"),
+    )
+    return _rejected(request, "herkunft")
+
+
+async def _checked_form(request: Request) -> dict[str, list[str]] | None:
+    """Formularfelder, falls das Token stimmt - sonst None."""
+    try:
+        form = csrf.parse_form(await request.body())
+    except csrf.FormTooLarge:
+        return None
+    submitted = (form.get(csrf.FIELD) or [None])[0]
+    return form if csrf.token_ok(submitted) else None
 
 
 @app.middleware("http")
@@ -233,18 +298,116 @@ def events(request: Request, session: Session = Depends(get_session)):
 
 
 @app.get("/titel", response_class=None)
-def ticker_index(request: Request, session: Session = Depends(get_session)):
+def ticker_index(
+    request: Request,
+    q: str | None = Query(default=None, max_length=300),
+    session: Session = Depends(get_session),
+):
     settings = get_settings()
+    lookups = None
+    if q and q.strip():
+        lookups = symbols.resolve_many(q)
+        watchlist_view.mark_known(session, lookups)
+    tickers = ticker_view.ticker_overview(session, settings)
+    background = background_state()
     return templates.TemplateResponse(
         request=request,
         name="tickers.html",
         context={
-            "tickers": ticker_view.ticker_overview(session, settings),
+            "tickers": tickers,
+            "q": (q or "").strip(),
+            "lookups": lookups,
+            "flash": watchlist_view.flash_from_query(request.query_params),
+            "inactive": watchlist.inactive_tickers(session),
+            "export_block": watchlist.config_block(session),
+            "background": background,
+            # Solange ein Lauf aussteht und Titel ohne Kurs dastehen, laedt die
+            # Seite sich selbst neu - der Nutzer soll nicht raten muessen.
+            "reload": background is not None and any(t["last_close"] is None for t in tickers),
             "last_run": views.last_run(session),
             "summary": views.summary(session),
             "settings": settings,
         },
     )
+
+
+def _add_symbols(chosen: list[str], names: dict[str, str]) -> watchlist.Addition:
+    with session_scope() as session:
+        return watchlist.add(session, chosen, names)
+
+
+def _remove_symbol(symbol: str) -> watchlist.Removal | None:
+    with session_scope() as session:
+        return watchlist.remove(session, symbol)
+
+
+@app.post("/titel/aufnehmen")
+async def ticker_add(request: Request):
+    form = await _checked_form(request)
+    if form is None:
+        return _rejected(request, "token")
+
+    chosen: list[str] = []
+    names: dict[str, str] = {}
+    for key, values in form.items():
+        if key.startswith("wahl-"):
+            symbol = symbols.normalize_symbol(values[0])
+            if symbol and symbol not in chosen:
+                chosen.append(symbol)
+        elif key.startswith("n:"):
+            symbol = symbols.normalize_symbol(key[2:])
+            if symbol and values:
+                names[symbol] = values[0][:128]
+    if not chosen:
+        return RedirectResponse(url="/titel?nichts=1", status_code=303)
+
+    # In den Threadpool: laeuft gerade ein Lauf mit grosser Schreibtransaktion,
+    # wartet SQLite - das soll nicht die ganze Anwendung anhalten.
+    result = await run_in_threadpool(_add_symbols, chosen, names)
+    if result.changed:
+        request_background_run(get_settings())
+    params = {
+        key: ",".join(value)
+        for key, value in (
+            ("aufgenommen", result.added),
+            ("reaktiviert", result.reactivated),
+            ("bereits", result.already),
+        )
+        if value
+    }
+    return RedirectResponse(url=f"/titel?{urlencode(params)}", status_code=303)
+
+
+@app.post("/titel/{symbol}/entfernen")
+async def ticker_remove(
+    request: Request, symbol: str = PathParam(pattern=r"^[A-Za-z0-9.\-]{1,16}$")
+):
+    if await _checked_form(request) is None:
+        return _rejected(request, "token")
+    removal = await run_in_threadpool(_remove_symbol, symbol.upper())
+    if removal is None:
+        raise HTTPException(status_code=404, detail=f"Unbekanntes Symbol: {symbol}")
+    params = {"entfernt": removal.symbol}
+    offen = removal.open_pead + removal.open_momentum
+    if offen:
+        params["offen"] = str(offen)
+    return RedirectResponse(url=f"/titel?{urlencode(params)}", status_code=303)
+
+
+@app.post("/titel/{symbol}/aufnehmen")
+async def ticker_readd(
+    request: Request, symbol: str = PathParam(pattern=r"^[A-Za-z0-9.\-]{1,16}$")
+):
+    form = await _checked_form(request)
+    if form is None:
+        return _rejected(request, "token")
+    result = await run_in_threadpool(_add_symbols, [symbol.upper()], {})
+    if result.changed:
+        request_background_run(get_settings())
+    if (form.get("zurueck") or [""])[0] == "steckbrief":
+        return RedirectResponse(url=f"/titel/{symbol.upper()}", status_code=303)
+    params = {"reaktiviert": ",".join(result.reactivated or result.added)}
+    return RedirectResponse(url=f"/titel?{urlencode(params)}", status_code=303)
 
 
 @app.get("/titel/{symbol}", response_class=None)
@@ -304,10 +467,12 @@ def momentum_page(request: Request, session: Session = Depends(get_session)):
 
 
 @app.post("/run-now")
-def run_now():
+async def run_now(request: Request):
     """Synchroner Lauf, danach zurueck auf die Startseite."""
+    if await _checked_form(request) is None:
+        return _rejected(request, "token")
     try:
-        result = run_daily(get_settings(), trigger="manual")
+        result = await run_in_threadpool(run_daily, get_settings(), trigger="manual")
     except PipelineBusy:
         return RedirectResponse(url="/?notice=busy", status_code=303)
     notice = {"OK": "ok", "PARTIAL": "partial"}.get(result.status, "failed")

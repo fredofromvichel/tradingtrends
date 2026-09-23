@@ -1,13 +1,18 @@
 # ===========================================================================
 # PEAD-Signal-POC - Konfiguration
-# Aenderungen wirken nach:  docker compose restart
+# Aenderungen wirken nach:  make restart
 # ===========================================================================
 
 # ---------------------------------------------------------------------------
-# PLATZHALTER - hier deine 20 Symbole eintragen.
-# Finnhub/Yahoo-Schreibweise (US-Ticker, z. B. AAPL; Xetra z. B. SAP.DE).
-# Achtung: der Finnhub-Free-Tier liefert Earnings zuverlaessig nur fuer
-# US-Titel. Nicht-US-Symbole landen ohne Earnings-Event in der DB.
+# STARTLISTE - wirkt nur auf eine LEERE Datenbank.
+#
+# Die beobachteten Titel pflegst du in der Oberflaeche unter /titel: dort
+# pruefen, aufnehmen, entfernen. Gespeichert wird in der Datenbank; diese
+# Liste hier wird danach nicht mehr gelesen, auch nicht nach einem git pull.
+# Gebraucht wird sie nur bei einer Neuinstallation oder nach 'make reset'.
+# Den passenden Block fuer deine aktuelle Liste zeigt /titel -> "Liste sichern".
+#
+# Schreibweise wie bei Yahoo (US-Ticker z. B. AAPL, Xetra z. B. SAP.DE).
 # ---------------------------------------------------------------------------
 tickers:
   - AAPL

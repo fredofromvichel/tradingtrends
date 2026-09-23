@@ -99,14 +99,23 @@ Drei Punkte, die dabei zählen:
 Abgewiesene Anfragen bekommen 403 und sehen ihre eigene Adresse — praktisch,
 wenn sich die IP geändert hat.
 
+**Schutz der Formulare.** Die Oberfläche kann Titel aufnehmen und entfernen.
+Dagegen hilft die IP-Sperre nicht allein: Eine fremde Webseite, die du im
+selben Browser öffnest, könnte ein Formular an die Anwendung schicken — und die
+Anfrage käme von deiner erlaubten Adresse. Deshalb prüft jede schreibende
+Anfrage zweierlei (`app/csrf.py`): dass der `Origin`-Kopf des Browsers zur
+Anwendung passt, und dass das Formular ein Token trägt, das eine fremde Seite
+nicht lesen kann. Das Token gilt bis zum nächsten Neustart; ein vorher
+geöffnetes Formular meldet sich danach als abgelaufen — neu laden genügt.
+
 ### Seiten
 
 | Pfad | Inhalt |
 |---|---|
 | `/` | **Übersicht**: was demnächst ausläuft, nächste Termine, Kennzahlen beider Quellen, offene Positionen |
 | `/history` | Geschlossene Signale mit realisierter Rendite |
-| `/titel` | Tagesstatus aller beobachteten Titel |
-| `/titel/<SYMBOL>` | Steckbrief: PEAD-Status, Kursverlauf, Kennzahlen, Termin, Analysten, Recherche-Links |
+| `/titel` | Tagesstatus aller Titel; Titel prüfen, aufnehmen, wieder aufnehmen, Liste sichern |
+| `/titel/<SYMBOL>` | Steckbrief: PEAD-Status, Kursverlauf, Kennzahlen, Termin, Analysten, Recherche-Links; Beobachtung beenden |
 | `/momentum` | Zweite Signalquelle: Rangfolge, aktueller Korb, Kennzahlen |
 | `/events` | Erfasste Earnings-Events (Rohdaten-Kontrolle) |
 | `/docs` | Interaktive OpenAPI-Dokumentation |
@@ -234,81 +243,72 @@ und ist beliebig wiederholbar, ohne Duplikate zu erzeugen.
 
 ## Konfiguration
 
-**`config.yaml`** — Ticker und Parameter. Die Datei ist ins Image gemountet,
-Änderungen brauchen nur `make restart`, keinen Rebuild.
+**`config.yaml`** — Parameter. Die Datei ist ins Image gemountet, Änderungen
+brauchen nur `make restart`, keinen Rebuild.
 
-> Die ausgelieferte Ticker-Liste ist ein **Platzhalter**. Vor dem ersten
-> ernsthaften Lauf dort die eigenen 20 Symbole eintragen.
+### Titel verwalten
 
-#### Symbole von boerse.de auf Yahoo-Schreibweise bringen
+Die beobachteten Titel pflegst du in der Oberfläche unter **`/titel`**, nicht in
+der `config.yaml`. Gespeichert wird in der Datenbank — ein `git pull` kann die
+eigene Liste damit nicht mehr überschreiben.
 
-Deutsche Portale führen eigene Kürzel, die Yahoo Finance nicht kennt. Die
-Umschlüsselung ist nicht mechanisch — zwei Fallstricke haben es in sich:
+**Aufnehmen.** Kürzel, Yahoo-Symbol oder Firmenname eingeben (mehrere mit
+Komma), „Prüfen" klicken. Die Prüfung löst die Eingabe über die Yahoo-Suche in
+Unternehmen und deren Handelsplätze auf und zeigt je Listing den letzten Kurs.
+Das ist nötig, weil dieselbe Buchstabenfolge an verschiedenen Börsen oft eine
+andere Firma ist:
 
-- **`AOMD` ist Alstom, nicht AMD.** Das Kürzel sieht aus wie der Chiphersteller
-  und ist der französische Zugbauer. Wer es falsch übernimmt, bekommt
-  klaglos Signale für die falsche Firma. Gegenprobe über den Kurs:
-  Alstom notiert zweistellig, AMD dreistellig.
-- **`AIR` ist Airbus, nicht AAR Corp.** An der NYSE trägt AAR Corp dasselbe
-  Kürzel.
+| Eingabe | Was dahintersteckt |
+|---|---|
+| `AOMD` | NYSE: Angel Oak Mortgage REIT · Xetra/Frankfurt: **Alstom** — und nicht AMD |
+| `AIR` | NYSE: AAR Corp · Xetra: **Airbus** |
+| `SAP` | NYSE/Xetra: SAP SE · Toronto: Saputo · Johannesburg: Sappi |
+| `NVD` | Xetra: NVIDIA — das US-Listing `NVDA` findet die Prüfung über den Namen |
 
-Die Endung bestimmt den Handelsplatz: `.DE` für Xetra, `.F` für Frankfurt,
-ohne Endung für die US-Börsen. Ein US-Listing ist dem deutschen vorzuziehen,
-wo es existiert — nur dort liefert Finnhub Earnings-Daten (siehe
-[Wenn Finnhub einen Titel nicht abdeckt](#wenn-finnhub-einen-titel-nicht-abdeckt)).
-`SAP` (NYSE) ist deshalb brauchbarer als `SAP.DE`.
+Angeboten werden nur Aktien mit aktuellen Kursen — ETFs melden keine Earnings,
+und ein Listing ohne Kurse könnte die Pipeline nicht verfolgen.
 
-| boerse.de | Yahoo | Unternehmen |
-|---|---|---|
-| NVD | `NVDA` | NVIDIA |
-| MSF | `MSFT` | Microsoft |
-| APC | `AAPL` | Apple |
-| FB2A | `META` | Meta Platforms |
-| AMZ | `AMZN` | Amazon |
-| PTX | `PLTR` | Palantir |
-| AHLA | `BABA` | Alibaba (NYSE) |
-| — | `SAP` | SAP SE (NYSE-Listing) |
-| AIR | `AIR.DE` | Airbus |
-| ENR | `ENR.DE` | Siemens Energy |
-| RWE | `RWE.DE` | RWE |
-| HAG | `HAG.DE` | Hensoldt |
-| R3NK | `R3NK.DE` | RENK Group |
-| AFX | `AFX.DE` | Carl Zeiss Meditec |
-| TKMS | `TKMS.DE` | TKMS (Spin-off, kurze Historie) |
-| TUI1 | `TUI1.DE` | TUI |
-| AOMD | `AOMD.DE` | **Alstom** — nicht AMD |
-| AXI1 | `AXI1.F` | Atos |
-| DAU0 | `DAU0.F` | Dassault Aviation |
-| BY6 | `BY6.F` | BYD |
+Passt eine Eingabe zu mehreren Unternehmen, steht ein Hinweis darüber und
+**nichts ist vorausgewählt**, damit niemand versehentlich die falsche Firma
+übernimmt. Je Unternehmen wird ein Handelsplatz bevorzugt:
 
-Ob ein Symbol trägt, zeigt `make check`: Titel ohne Kurshistorie stehen dort
-mit Namen, statt still zu fehlen.
+1. **US-Börse** — nur dort liefert Finnhub im freien Tarif Earnings
+   (siehe [Wenn Finnhub einen Titel nicht abdeckt](#wenn-finnhub-einen-titel-nicht-abdeckt)).
+2. **Xetra** (`.DE`) — liquidester deutscher Handelsplatz, Kurse in Euro.
+3. **Frankfurt** (`.F`), dann die Heimatbörse, dann Regionalbörsen, OTC zuletzt.
 
-**Eigene Tickerliste über ein Update retten.** `config.yaml` liegt im Repo,
-ein Branchwechsel oder ein größeres Update bringt also die Fassung aus der
-Versionsverwaltung mit. Damit die eigene Liste nicht verlorengeht:
+Nach dem Aufnehmen startet ein Lauf im Hintergrund und holt Kurshistorie,
+Termine und Stammdaten; die Liste lädt sich währenddessen selbst neu. Läuft
+gerade ein anderer Lauf, wartet er auf ihn. Mehrere Änderungen kurz
+hintereinander teilen sich einen Lauf.
 
-```bash
-cp config.yaml ~/config.mein.yaml     # vorher sichern
-git pull                              # oder: git checkout <branch>
-python3 tools/merge-tickers.py ~/config.mein.yaml config.yaml
-make restart
-```
+**Entfernen.** Auf dem Steckbrief unter dem Kurs: „Nicht mehr beobachten".
+Gelöscht wird nichts — Kurshistorie und abgeschlossene Signale bleiben lesbar,
+und **offene Positionen laufen bis zum regulären Ausstieg weiter**. Der Titel
+bekommt dafür weiter Kurse, nur neue Signale entstehen nicht mehr. Die
+Rückmeldung danach bietet „Rückgängig"; entfernte Titel stehen unten auf
+`/titel` unter „Nicht mehr beobachtet" und lassen sich dort wieder aufnehmen.
 
-Das Werkzeug überträgt **nur** den `tickers`-Block und lässt alles andere
-unangetastet — auch die Kommentare, die in dieser Datei die halbe
-Dokumentation sind. Vor dem Schreiben legt es `config.yaml.bak` an. Findet es
-keinen brauchbaren Block, bricht es ab, statt die Zieldatei zu beschädigen.
+**Sichern.** `/titel` → „Liste sichern" zeigt die aktuelle Liste als
+`tickers:`-Block. Der `tickers`-Eintrag in der `config.yaml` ist nur noch die
+**Startliste für eine leere Datenbank** — nach einer Neuinstallation oder
+`make reset`. Steht dort etwas, das nicht beobachtet wird, sagt das Log beim
+Start, dass die Datei an dieser Stelle nicht mehr wirkt.
+
+> **Beim ersten Update auf diese Version:** Die Liste, die gerade läuft, steht
+> bereits in der Datenbank und bleibt. Eine lokal geänderte `config.yaml`
+> blockiert aber den `git pull`. Dann: `cp config.yaml ~/config.alt.yaml &&
+> git checkout -- config.yaml && git pull && make rebuild`.
 
 | Parameter | Default | Bedeutung |
 |---|---|---|
-| `tickers` | 20 US-Large-Caps (Platzhalter) | Beobachtete Symbole |
+| `tickers` | 20 US-Large-Caps | Startliste für eine leere Datenbank; gepflegt wird unter `/titel` |
 | `sue_threshold_buy` / `_sell` | `1.0` / `-1.0` | SUE-Schwellen, exklusiv |
 | `surprise_pct_fallback_buy` / `_sell` | `0.05` / `-0.05` | Fallback ohne Historie, als Bruch (0.05 = 5 %) |
 | `min_history_for_sue` | `4` | Ab wie vielen Vorquartalen SUE berechnet wird |
 | `holding_period_days` | `20` | Haltedauer in **Handelstagen** |
 | `lookback_days_earnings` | `3` | Abruffenster des Earnings-Kalenders |
-| `price_backfill_days` | `180` | Kurshistorie beim ersten Lauf |
+| `price_backfill_days` | `180` | Kurshistorie für Titel mit weniger als 60 Kurstagen, etwa neu aufgenommene |
 | `price_refresh_days` | `7` | Kursfenster bei Folgeläufen |
 | `schedule.cron` | `30 22 * * 1-5` | Werktags 22:30, nach US-Börsenschluss |
 | `schedule.timezone` | `Europe/Berlin` | Zeitzone des Cron-Ausdrucks |
@@ -321,6 +321,7 @@ keinen brauchbaren Block, bricht es ab, statt die Zieldatei zu beschädigen.
 
 | Geändert | Befehl | Warum |
 |---|---|---|
+| Titelliste | – | Wirkt sofort; die Oberfläche startet selbst einen Lauf. |
 | `config.yaml` | `make restart` | Die Datei ist gemountet und wird beim Start neu gelesen. |
 | `.env` | `make up` | `docker compose restart` startet **denselben** Container neu — dessen Umgebungsvariablen wurden bei seiner Erstellung gesetzt und ändern sich dabei nicht. Erst `up -d` erkennt die geänderte Konfiguration und ersetzt den Container. |
 | Code unter `app/` | `make rebuild` | Der Code liegt im Image, nicht im Mount. |
@@ -574,8 +575,8 @@ getrennt (siehe oben).
 
 ## Wie die Pipeline arbeitet
 
-Ein Durchlauf (`pipeline.run_daily()`), identisch ob vom Scheduler, vom Button
-oder von der CLI ausgelöst:
+Ein Durchlauf (`pipeline.run_daily()`), identisch ob vom Scheduler, vom Button,
+nach einer Änderung der Titelliste oder von der CLI ausgelöst:
 
 0. **Stammdaten** — einmalig je Ticker: Firmenname, Branche und Börse über
    Finnhub `/stock/profile2`, nur für Symbole, bei denen sie noch fehlen. Danach
@@ -592,7 +593,14 @@ oder von der CLI ausgelöst:
    `sue = surprise_pct / stdev(historische surprise_pct)`.
 3. **Signal-Entscheidung** — SUE hat Vorrang; ohne SUE greift die
    `surprise_pct`-Schwelle. Schwellen sind exklusiv (genau auf der Grenze → kein Signal).
-4. **Kursdaten** — yfinance, Tages-OHLCV, split- und dividendenbereinigt.
+4. **Kursdaten** — yfinance, Tages-OHLCV, split- und dividendenbereinigt. Das
+   Fenster wird **je Titel** bestimmt: wer weniger als 60 Kurstage hat (etwa
+   frisch aufgenommen), bekommt `price_backfill_days`, alle anderen nur
+   `price_refresh_days`. Kurse holt der Lauf für alle beobachteten Titel **und**
+   für entfernte, auf denen noch eine Position offen ist — sonst schlösse sie
+   nie. Vor 22:15 Uhr wird der Kurs des laufenden Tages nicht übernommen: Yahoo
+   liefert dann einen Zwischenstand, und eine damit geschlossene Position
+   behielte eine Rendite, die es zum Handelsschluss nie gab.
 5. **Neue Signale anlegen** — Status `OPEN`, Einstieg am ersten **handelbaren**
    Schlusskurs nach der Meldung.
 6. **Offene Positionen prüfen** — sind `holding_period_days` Handelstage seit dem
@@ -657,24 +665,35 @@ nicht ab — dafür bleibt `make reset`.
 
 ```
 app/
-├── main.py              FastAPI-App, Routen, Lifespan
+├── main.py              FastAPI-App, Routen, Lifespan, Middleware
 ├── config.py            config.yaml + Env, mit Validierung
 ├── models.py            SQLAlchemy-Modelle
-├── db.py                Engine, Session, Ticker-Abgleich
+├── db.py                Engine, Session, Schema-Ergänzung
+├── watchlist.py         Titelliste: Startliste, aufnehmen, entfernen, Export
+├── watchlist_view.py    Rückmeldungen und Vorauswahl der Titelverwaltung
+├── symbols.py           Symbolprüfung: Eingabe -> Unternehmen -> Handelsplatz
+├── access.py            IP-Allowlist
+├── csrf.py              Herkunfts- und Token-Prüfung für Formulare
 ├── signals.py           PEAD-Signal-Logik (netz- und DB-frei, voll getestet)
+├── explain.py           Rechenweg eines Signals in Alltagssprache
 ├── momentum.py          Momentum-Logik: Score, Rangfolge, Gruppenbildung
 ├── momentum_view.py     Aufbereitung der Momentum-Seite
 ├── stats.py             Konfidenzintervalle, Sperre kleiner Stichproben
 ├── indicators.py        beschreibende Kurskennzahlen (keine Prognose)
 ├── charting.py          Diagrammgeometrie (reine Rechnung, kein Rendering)
 ├── research.py          Recherche-Links mit eingegrenzten Suchanfragen
+├── dashboard.py         Übersichtsseite
 ├── ticker_view.py       Zusammenstellung des Titel-Steckbriefs
-├── pipeline.py          Orchestrierung des Tageslaufs
+├── market_context.py    Kurse je Anfrage einmal laden statt je Zeile
+├── coverage.py          gemerkte Finnhub-Tarifsperren
+├── pipeline.py          Orchestrierung des Laufs, Hintergrundlauf
 ├── scheduler.py         APScheduler
 ├── views.py             Aufbereitung für Frontend und API
 ├── cli.py               run / check / status / seed / backfill
 └── sources/
     ├── finnhub_client.py
+    ├── earnings.py      quellenneutrales Earnings-Format
+    ├── yahoo_earnings.py  Ausweichquelle für Earnings und Termine
     └── prices.py        yfinance
 ```
 
@@ -700,13 +719,20 @@ app/
 make test
 ```
 
-202 Tests, ohne Netzzugriff:
+Rund 330 Tests, ohne Netzzugriff — `tests/conftest.py` ersetzt Yahoo durch eine
+Attrappe, die sich wie bei einem unbekannten Symbol verhält, damit kein Test
+stillschweigend davon abhängt, was Yahoo gerade antwortet. Die wichtigsten:
 
 * `tests/test_signals.py` — Surprise, SUE, Schwellenwerte, Short-Rendite,
   Handelstags-Arithmetik über Wochenenden, Einstiegstag je Meldezeitpunkt.
 * `tests/test_pipeline.py` — kompletter Durchlauf gegen Attrappen von Finnhub und
-  yfinance: Event erfassen, Signal eröffnen, Position schließen, Idempotenz und
-  Verhalten beim Ausfall einer Datenquelle.
+  yfinance: Event erfassen, Signal eröffnen, Position schließen, Idempotenz,
+  Ausfall einer Datenquelle, Kursfenster je Titel, Zwischenkurse während des
+  Handels, Hintergrundlauf nach einer Listenänderung.
+* `tests/test_symbols.py` — Symbolprüfung an nachgebildeten Yahoo-Antworten,
+  darunter AOMD (drei Firmen, eine Buchstabenfolge).
+* `tests/test_titel_routes.py` — Titelverwaltung über echtes Routing,
+  einschließlich abgewiesener Formulare ohne Token oder von fremder Herkunft.
 
 ---
 
@@ -727,7 +753,10 @@ make test
 | Kein Analystenbild, kein nächster Termin | `/stock/recommendation` bzw. `/calendar/earnings` sind im Tarif gesperrt oder liefern für diesen Titel nichts. `make check` zeigt den Kalender; die Seite blendet den Block dann aus. |
 | Recherche-Links treffen das Falsche | Begriffe in `config.yaml` unter `research:` anpassen, `make restart`. Häufigste Ursachen: fehlende Branchenübersetzung (die englische Bezeichnung wird dann roh gesucht) oder ein zu generischer Firmenname. |
 | `make seed` findet trotzdem nichts | Fenster vergrößern (`make seed DAYS=400`); oder `/calendar/earnings` ist im Tarif gesperrt (`make check` zeigt es); oder die Ticker sind keine US-Titel. |
-| Keine Kursdaten für ein Symbol | Schreibweise gegen Yahoo Finance prüfen (Xetra z. B. `SAP.DE`). |
+| Titel zeigt „keine Kurse" | Yahoo kennt die Schreibweise nicht. Auf dem Steckbrief „Nicht mehr beobachten", dann unter `/titel` über „Prüfen" neu aufnehmen — die Prüfung bietet nur Listings mit Kursen an. |
+| Titel steht auf „wird geladen …" | Der Hintergrundlauf ist noch nicht fertig; die Seite lädt sich alle zehn Sekunden neu. Dauert es länger als ein paar Minuten, zeigt `make logs` den Grund. |
+| „Die Änderung wurde nicht ausgeführt – Formular abgelaufen" | Der Container wurde neu gestartet, seit die Seite geladen wurde. Neu laden und noch einmal abschicken. |
+| Änderungen an `tickers` in der `config.yaml` wirken nicht | Gewollt: die Liste wird unter `/titel` gepflegt. Die Datei ist nur die Startliste einer leeren Datenbank; das Log sagt es beim Start. |
 | Jede Seite antwortet mit „Internal Server Error" | Im Log steht meist `no such column`. Die Datenbank ist älter als der Code. Ab dieser Fassung ergänzt der Start fehlende Spalten selbst — also `git pull && make rebuild`. Bleibt es dabei, hilft `make reset` (Kurse holt `make backfill` zurück). |
 | `./data/poc.db` gehört root | `APP_UID`/`APP_GID` in `.env` auf die eigene ID setzen, `make up`. |
 | Port 8000 belegt | `HOST_PORT` in `.env` ändern, `make up`. |

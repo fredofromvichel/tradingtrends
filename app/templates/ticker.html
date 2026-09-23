@@ -7,13 +7,26 @@
 <nav class="ticker-nav" aria-label="Titel wechseln">
   <a href="/titel" class="ticker-nav-back">‹ Alle Titel</a>
   <div class="ticker-nav-pager">
-    <span class="muted">{{ d.position }} von {{ d.total }}</span>
+    {% if d.position %}<span class="muted">{{ d.position }} von {{ d.total }}</span>
+    {% else %}<span class="muted">nicht in der Liste</span>{% endif %}
     {% if d.prev_symbol %}<a href="/titel/{{ d.prev_symbol }}" data-prev accesskey="p"
        title="Vorheriger Titel (Taste k oder ←)">‹ {{ d.prev_symbol }}</a>{% endif %}
     {% if d.next_symbol %}<a href="/titel/{{ d.next_symbol }}" data-next accesskey="n"
        title="Nächster Titel (Taste j oder →)">{{ d.next_symbol }} ›</a>{% endif %}
   </div>
 </nav>
+
+{% if not d.active %}
+<div class="flash warn inactive-banner" role="status">
+  <span><strong>{{ d.symbol }} wird nicht mehr beobachtet.</strong> Die Historie bleibt
+  lesbar; offene Positionen laufen bis zum Ausstieg weiter, neue Signale entstehen nicht.</span>
+  <form method="post" action="/titel/{{ d.symbol }}/aufnehmen" class="inline">
+    <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token() }}">
+    <input type="hidden" name="zurueck" value="steckbrief">
+    <button type="submit" class="secondary">Wieder aufnehmen</button>
+  </form>
+</div>
+{% endif %}
 
 <header class="card ticker-head">
   <div>
@@ -26,6 +39,14 @@
   <div class="ticker-price">
     <span class="ticker-close">{{ d.context.last_close|num }}</span>
     <span class="runinfo">Schlusskurs {{ d.context.last_date|datefmt }}</span>
+    {% if d.active %}
+    <form method="post" action="/titel/{{ d.symbol }}/entfernen" class="inline ticker-remove">
+      <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token() }}">
+      <button type="submit" class="link-btn"
+              title="Beendet die Beobachtung. Historie und offene Positionen bleiben; rückgängig machbar.">
+        Nicht mehr beobachten</button>
+    </form>
+    {% endif %}
   </div>
 </header>
 

@@ -906,3 +906,220 @@ def test_abgeschaltete_ausweichquelle_laesst_den_titel_leer(
     assert result.status == "OK"
     with session_scope() as session:
         assert session.scalar(select(EarningsEvent)) is None
+
+
+# -- Kursabruf je Titel -------------------------------------------------------
+
+
+def _recording_prices(trading_days, calls):
+    def fetch(symbols, start, end):
+        calls.append((tuple(symbols), start))
+        return [
+            PriceRow(sym, d, 100.0, 101.0, 99.0, 100.0 + i, 1000)
+            for sym in symbols
+            for i, d in enumerate(trading_days)
+            if start <= d <= end
+        ], []
+    return fetch
+
+
+def test_neuer_titel_bekommt_volle_historie_trotz_bestand(settings, database, monkeypatch,
+                                                          trading_days):
+    """Frueher entschied ein einziger vorhandener Kurs in der DB ueber das Fenster -
+    ein spaeter aufgenommener Titel bekam dann nur eine Woche Historie."""
+    from app import watchlist
+    from app.pipeline import run_daily
+
+    calls: list = []
+    monkeypatch.setattr("app.pipeline.FinnhubClient", FakeFinnhubBase)
+    monkeypatch.setattr("app.pipeline.fetch_prices", _recording_prices(trading_days, calls))
+
+    run_daily(settings, trigger="test")
+    with session_scope() as session:
+        watchlist.add(session, ["NEU"])
+    calls.clear()
+    run_daily(settings, trigger="test")
+
+    today = dt.date.today()
+    fenster = dict(calls)
+    assert fenster[("NEU",)] == today - dt.timedelta(days=settings.price_backfill_days)
+    assert fenster[(SYMBOL,)] == today - dt.timedelta(days=settings.price_refresh_days)
+
+
+def test_entfernter_titel_mit_offener_position_bekommt_weiter_kurse(
+    settings, database, monkeypatch, trading_days
+):
+    """Sonst schloesse die Position nie - sie bliebe fuer immer OPEN."""
+    from app import watchlist
+    from app.pipeline import _price_symbols, run_daily
+
+    recent = trading_days[-2]
+
+    class RecentFinnhub(FakeFinnhubBase):
+        def earnings_calendar(self, symbol, date_from, date_to):
+            return [RawEarnings(symbol, recent, 1.00, 1.20, 20.0, "q", "bmo")]
+
+        def earnings_surprises(self, symbol):
+            base = recent - dt.timedelta(days=365)
+            return [
+                RawEarnings(symbol, base + dt.timedelta(days=90 * i), 1.00,
+                            1.00 + s, s * 100, "hist", None)
+                for i, s in enumerate([0.01, -0.01, 0.02, 0.00])
+            ]
+
+    calls: list = []
+    monkeypatch.setattr("app.pipeline.FinnhubClient", RecentFinnhub)
+    monkeypatch.setattr("app.pipeline.fetch_prices", _recording_prices(trading_days, calls))
+    assert run_daily(settings, trigger="test").signals_opened == 1
+
+    with session_scope() as session:
+        removal = watchlist.remove(session, SYMBOL)
+    assert removal.open_pead == 1
+
+    with session_scope() as session:
+        assert watchlist.active_symbols(session) == []
+        assert _price_symbols(session) == [SYMBOL]
+
+    calls.clear()
+    run_daily(settings, trigger="test")
+    assert any(SYMBOL in symbols for symbols, _ in calls)
+
+
+def test_entfernter_titel_ohne_position_bekommt_keine_kurse_mehr(
+    settings, database, monkeypatch, trading_days
+):
+    from app import watchlist
+    from app.pipeline import _price_symbols, run_daily
+
+    monkeypatch.setattr("app.pipeline.FinnhubClient", FakeFinnhubBase)
+    monkeypatch.setattr("app.pipeline.fetch_prices", _recording_prices(trading_days, []))
+    run_daily(settings, trigger="test")
+
+    with session_scope() as session:
+        watchlist.remove(session, SYMBOL)
+    with session_scope() as session:
+        assert _price_symbols(session) == []
+
+
+# -- Lauf nach Aenderung der Titelliste -------------------------------------
+
+
+def _warte_auf_hintergrund(timeout=10.0):
+    import time
+
+    from app.pipeline import background_state
+
+    ende = time.time() + timeout
+    while background_state() is not None and time.time() < ende:
+        time.sleep(0.02)
+    assert background_state() is None, "Hintergrundlauf haengt"
+
+
+def test_hintergrundlauf_holt_daten_fuer_neuen_titel(settings, database, monkeypatch,
+                                                     trading_days):
+    from app import watchlist
+    from app.models import PipelineRun
+    from app.pipeline import request_background_run, run_daily
+
+    monkeypatch.setattr("app.pipeline.FinnhubClient", FakeFinnhubBase)
+    monkeypatch.setattr("app.pipeline.fetch_prices", _recording_prices(trading_days, []))
+    run_daily(settings, trigger="test")
+    with session_scope() as session:
+        watchlist.add(session, ["NEU"])
+
+    assert request_background_run(settings) is True
+    _warte_auf_hintergrund()
+
+    with session_scope() as session:
+        assert session.scalar(select(PipelineRun.trigger).order_by(PipelineRun.id.desc())) == "titel"
+        assert session.scalar(select(Price).where(Price.symbol == "NEU")) is not None
+
+
+def test_hintergrundlauf_wartet_auf_laufenden_und_buendelt(settings, database, monkeypatch,
+                                                          trading_days):
+    """Waehrend ein Lauf laeuft, reihen zwei Aenderungen genau einen Folgelauf ein."""
+    import app.pipeline as pipeline
+    from app.models import PipelineRun
+
+    monkeypatch.setattr("app.pipeline.FinnhubClient", FakeFinnhubBase)
+    monkeypatch.setattr("app.pipeline.fetch_prices", _recording_prices(trading_days, []))
+
+    assert pipeline._run_lock.acquire(blocking=False)   # "laufender" Lauf
+    try:
+        assert pipeline.request_background_run(settings) is True
+        assert pipeline.request_background_run(settings) is False
+        assert pipeline.background_state() == "queued"
+    finally:
+        pipeline._run_lock.release()
+    _warte_auf_hintergrund()
+
+    with session_scope() as session:
+        triggers = session.scalars(select(PipelineRun.trigger)).all()
+    assert triggers == ["titel"]
+
+
+def test_manueller_lauf_meldet_besetzt_statt_zu_warten(settings, database):
+    import app.pipeline as pipeline
+
+    assert pipeline._run_lock.acquire(blocking=False)
+    try:
+        with pytest.raises(pipeline.PipelineBusy):
+            pipeline.run_daily(settings, trigger="manual")
+    finally:
+        pipeline._run_lock.release()
+
+
+# -- Kurse des laufenden Handelstags ------------------------------------------
+
+
+def test_zwischenstand_von_heute_wird_nicht_gespeichert(settings, database, monkeypatch,
+                                                        trading_days):
+    """Sonst schloesse ein Lauf um 11 Uhr eine Position zum Vormittagskurs."""
+    from app.pipeline import run_daily
+
+    monkeypatch.setattr("app.pipeline.trading_day_complete", lambda now=None: False)
+    monkeypatch.setattr("app.pipeline.FinnhubClient", FakeFinnhubBase)
+    monkeypatch.setattr("app.pipeline.fetch_prices", _recording_prices(trading_days, []))
+    run_daily(settings, trigger="test")
+
+    with session_scope() as session:
+        letzter = session.scalar(select(Price.date).order_by(Price.date.desc()))
+    assert letzter == trading_days[-2]
+
+
+def test_nach_handelsschluss_zaehlt_der_heutige_kurs(settings, database, monkeypatch,
+                                                     trading_days):
+    from app.pipeline import run_daily
+
+    monkeypatch.setattr("app.pipeline.FinnhubClient", FakeFinnhubBase)
+    monkeypatch.setattr("app.pipeline.fetch_prices", _recording_prices(trading_days, []))
+    run_daily(settings, trigger="test")
+
+    with session_scope() as session:
+        letzter = session.scalar(select(Price.date).order_by(Price.date.desc()))
+    assert letzter == trading_days[-1]
+
+
+@pytest.mark.parametrize("uhrzeit,erwartet", [
+    ("09:45", False),
+    ("21:30", False),     # Xetra zu, New York noch offen
+    ("22:14", False),
+    ("22:15", True),
+    ("23:59", True),
+])
+def test_handelsschluss_nach_deutscher_zeit(monkeypatch, uhrzeit, erwartet):
+    monkeypatch.undo()    # die Vorgabe aus conftest.py aufheben
+    from app.pipeline import BERLIN, trading_day_complete
+
+    stunde, minute = map(int, uhrzeit.split(":"))
+    now = BERLIN.localize(dt.datetime(2026, 9, 23, stunde, minute))
+    assert trading_day_complete(now) is erwartet
+
+
+def test_handelsschluss_rechnet_utc_um(monkeypatch):
+    monkeypatch.undo()
+    from app.pipeline import trading_day_complete
+
+    # 20:30 UTC = 22:30 Sommerzeit in Berlin
+    assert trading_day_complete(dt.datetime(2026, 9, 23, 20, 30, tzinfo=dt.timezone.utc))
+    assert not trading_day_complete(dt.datetime(2026, 9, 23, 19, 30, tzinfo=dt.timezone.utc))
