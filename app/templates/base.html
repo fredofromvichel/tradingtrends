@@ -30,7 +30,7 @@
     .wrap{max-width:1180px;margin:0 auto;padding:0 20px}
     header.top{background:var(--surface);border-bottom:1px solid var(--rule)}
     .top-inner{display:flex;flex-wrap:wrap;gap:16px;align-items:baseline;
-      justify-content:space-between;padding:22px 0 18px}
+      justify-content:space-between;padding-top:22px;padding-bottom:18px}
     h1{font-size:20px;margin:0;letter-spacing:-.01em}
     h1 span{color:var(--ink-faint);font-weight:400;font-size:13px;display:block;margin-top:2px}
     nav{display:flex;gap:6px;flex-wrap:wrap}
@@ -128,6 +128,12 @@
     pre.export{background:var(--surface-2);border-radius:8px;padding:12px 14px;font-size:13px;
       overflow-x:auto;margin:10px 0 0;user-select:all}
     .inactive-banner{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;justify-content:space-between}
+    .name-edit{margin-top:6px;font-size:12.5px}
+    .name-edit summary{cursor:pointer;color:var(--accent)}
+    .name-form{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+    .name-form input[type=text]{flex:1 1 220px;font:inherit;font-size:14px;padding:6px 10px;
+      border-radius:7px;border:1px solid var(--rule);background:var(--surface);color:var(--ink)}
+    .name-edit .runinfo{margin:6px 0 0;max-width:52ch}
     form.ticker-remove{display:block;margin-top:8px;font-size:12.5px;color:var(--ink-faint)}
     .ticker-remove .link-btn{font-weight:400}
     .ticker-remove .link-btn:hover{color:var(--ink)}
@@ -309,6 +315,73 @@
     .chart-legend .key.ring{width:9px;height:9px;border-radius:50%;background:none;
       border:2px solid var(--mark-neutral)}
     .chart-legend .sep{width:1px;background:var(--rule)}
+
+    /* Wind und Lage */
+    .wind-icon{flex:none;vertical-align:middle}
+    .wind-icon.rueckenwind{color:var(--mark-buy)}
+    .wind-icon.gegenwind{color:var(--mark-sell)}
+    .wind-icon.flaute,.wind-icon.none{color:var(--ink-faint)}
+    .lage-grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+    .lage-tile{background:var(--surface-2);border-radius:10px;padding:11px 13px;
+      display:flex;gap:10px;align-items:flex-start}
+    .lage-tile p{margin:0}
+    .lage-k{font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);
+      font-weight:600}
+    .lage-v{font-size:15.5px;font-weight:600;color:var(--ink);line-height:1.3;margin-top:1px}
+    .lage-s{font-size:12.5px;color:var(--ink-muted);margin-top:2px}
+    .lage-tile.main{grid-column:span 1;background:transparent;border:1px solid var(--rule)}
+    .lage-tile.main .lage-v{font-size:17px}
+    .lage-note{margin:10px 0 0}
+    .reading-head{display:flex;flex-direction:column;gap:4px}
+    .reading-wind{display:inline-flex;align-items:center;gap:5px;font-size:12px;
+      color:var(--ink-muted);white-space:nowrap}
+
+    /* Nachrichtenlage */
+    .news-head{display:flex;gap:10px;align-items:center;margin:2px 0 8px}
+    .news-overall{margin:0;font-size:15px}
+    .news-summary{margin:0;font-size:15px;line-height:1.6;max-width:75ch}
+    .cite{font-size:11.5px;vertical-align:super;text-decoration:none;margin-left:1px;
+      color:var(--accent);font-weight:600}
+    .cite:hover{text-decoration:underline}
+    .news-warn{margin:6px 0 0}
+    .news-events{margin:0;padding-left:20px;font-size:14px;line-height:1.55;max-width:75ch}
+    .news-sources{margin-top:14px}
+    .news-sources summary{cursor:pointer;font-weight:600;font-size:14px}
+    .news-list{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:10px}
+    .news-list li{display:flex;gap:10px;font-size:13.5px}
+    .news-list li.irrelevant{opacity:.6}
+    .news-n{flex:none;width:22px;height:22px;border-radius:50%;background:var(--surface-2);
+      display:inline-flex;align-items:center;justify-content:center;font-size:11.5px;
+      font-weight:600;color:var(--ink-muted)}
+    .news-note{margin:3px 0 0;color:var(--ink-muted);font-size:13px}
+    .sent{font-size:11px;font-weight:700;padding:1px 7px;border-radius:5px;margin-right:4px}
+    .sent.positiv{background:color-mix(in srgb, var(--mark-buy) 18%, transparent);color:var(--mark-buy)}
+    .sent.negativ{background:color-mix(in srgb, var(--mark-sell) 18%, transparent);color:var(--mark-sell)}
+    .sent.neutral{background:var(--surface-2);color:var(--ink-muted)}
+
+    /* Momentum-Karte */
+    .mcard{display:grid;gap:18px;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);
+      align-items:start}
+    @media (max-width: 760px){ .mcard{grid-template-columns:1fr} }
+    .mcard-head{display:flex;gap:10px;align-items:center;margin:4px 0 6px}
+    .mcard-head h2{margin:0}
+    .ladder{display:flex;gap:2px;margin:10px 0 4px}
+    .ladder .cell{flex:1 1 0;height:22px;border-radius:3px;background:var(--surface-2);
+      min-width:4px}
+    .ladder .cell.top{background:color-mix(in srgb, var(--mark-buy) 38%, var(--surface-2))}
+    .ladder .cell.bottom{background:color-mix(in srgb, var(--mark-sell) 38%, var(--surface-2))}
+    .ladder .cell.own{background:var(--ink);outline:2px solid var(--surface);
+      box-shadow:0 0 0 3.5px var(--ink)}
+    .ladder-scale{display:flex;justify-content:space-between;font-size:11.5px;
+      color:var(--ink-faint)}
+    .ladder-scale .mid{color:var(--ink-muted)}
+    .rankline{width:100%;max-width:320px;height:auto;display:block;overflow:visible}
+    .rankline .band.top{fill:var(--mark-buy);opacity:.12}
+    .rankline .band.bottom{fill:var(--mark-sell);opacity:.12}
+    .rankline .rl{fill:none;stroke:var(--accent);stroke-width:2;stroke-linejoin:round;
+      stroke-linecap:round}
+    .rankline .rl-dot{fill:var(--accent);stroke:var(--surface);stroke-width:2}
+    .rankline .rl-label{font-size:10px;fill:var(--ink-muted)}
 
     /* Lesehilfe */
     .readings{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}
@@ -496,9 +569,81 @@
       grid-template-columns:repeat(auto-fit,minmax(270px,1fr))}
     tr.explain-row .explain-text{max-width:46ch}
     tr.explain-row .explain-caveat{margin-top:16px}
+
+    /* ---- Handy ------------------------------------------------------------
+       Tabellen werden zu Karten (Beschriftung setzt ui.js aus den Spalten-
+       koepfen), Kacheln zweispaltig, Navigation einzeilig zum Wischen. */
+    @media (max-width: 640px){
+      .wrap{padding:0 14px}
+      .top-inner{padding-top:14px;padding-bottom:10px;gap:10px}
+      h1{font-size:18px}
+      nav{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;
+        width:100%;margin:0 -4px;padding-bottom:2px;scrollbar-width:none}
+      nav::-webkit-scrollbar{display:none}
+      nav a{white-space:nowrap;padding:8px 13px;font-size:14px}
+      main{padding:16px 0 40px;gap:14px}
+      .card{padding:14px 14px;border-radius:10px}
+      h2{font-size:16px}
+      .stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+      .stat{padding:9px 11px}
+      .stat dd{font-size:17px}
+      .lage-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+      .lage-tile{padding:9px 10px;gap:7px}
+      .lage-tile.main{grid-column:1/-1}
+      .lage-v{font-size:14.5px}
+      .readings{grid-template-columns:1fr}
+      .ticker-head{align-items:flex-start}
+      .ticker-price{text-align:left}
+      .ticker-close{font-size:26px}
+      button{padding:10px 16px}
+      .ticker-nav-pager a{padding:7px 12px}
+
+      .scroll{border:none;background:transparent;overflow:visible}
+      table.cards thead{display:none}
+      table.cards,table.cards tbody{display:block}
+      table.cards tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 14px;
+        background:var(--surface);border:1px solid var(--rule);border-radius:10px;
+        padding:10px 12px;margin-bottom:8px}
+      table.cards tr[hidden]{display:none}
+      table.cards td{display:block;padding:0;border:0;white-space:normal;text-align:left;
+        min-width:0;overflow-wrap:anywhere}
+      table.cards td::before{content:attr(data-label);display:block;font-size:10.5px;
+        letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);font-weight:600}
+      table.cards td[data-label=""]::before{content:none}
+      table.cards td.sym{grid-column:1/-1;font-size:15px}
+      table.cards td.sym::before{content:none}
+      table.cards td[colspan]{grid-column:1/-1}
+      table.cards tr.explain-row{display:block;padding:10px 12px}
+      table.cards tr.explain-row[hidden]{display:none}
+      table.cards td.why{grid-column:1/-1;text-align:left}
+      table.cards td.why::before{content:none}
+    }
   </style>
 </head>
 <body>
+{# Symbole fuer Rueckenwind, Gegenwind, Flaute - einmal definiert, ueberall per <use>. #}
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="i-rueckenwind" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="11" fill="currentColor" opacity=".14"></circle>
+    <path d="M7.5 16.5 L16 8 M10 8 H16 V14" fill="none" stroke="currentColor"
+          stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+  </symbol>
+  <symbol id="i-gegenwind" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="11" fill="currentColor" opacity=".14"></circle>
+    <path d="M7.5 7.5 L16 16 M10 16 H16 V10" fill="none" stroke="currentColor"
+          stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+  </symbol>
+  <symbol id="i-flaute" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="11" fill="currentColor" opacity=".14"></circle>
+    <path d="M6.5 12 H17 M13.5 8.5 L17 12 L13.5 15.5" fill="none" stroke="currentColor"
+          stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+  </symbol>
+  <symbol id="i-none" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="11" fill="currentColor" opacity=".14"></circle>
+    <path d="M12 11 V17 M12 7.5 V7.6" fill="none" stroke="currentColor"
+          stroke-width="2.4" stroke-linecap="round"></path>
+  </symbol>
+</svg>
 <header class="top">
   <div class="wrap top-inner">
     <h1>PEAD-Signal-POC<span>Post-Earnings-Announcement-Drift · Machbarkeitstest</span></h1>

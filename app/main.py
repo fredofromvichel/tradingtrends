@@ -21,6 +21,7 @@ from app import (
     csrf,
     dashboard,
     momentum_view,
+    news,
     symbols,
     ticker_view,
     views,
@@ -395,6 +396,40 @@ async def ticker_remove(
     return RedirectResponse(url=f"/titel?{urlencode(params)}", status_code=303)
 
 
+def _set_name(symbol: str, name: str) -> bool:
+    with session_scope() as session:
+        return watchlist.set_name(session, symbol, name) is not None
+
+
+@app.post("/titel/{symbol}/name")
+async def ticker_name(
+    request: Request, symbol: str = PathParam(pattern=r"^[A-Za-z0-9.\-]{1,16}$")
+):
+    form = await _checked_form(request)
+    if form is None:
+        return _rejected(request, "token")
+    name = (form.get("name") or [""])[0]
+    if not await run_in_threadpool(_set_name, symbol.upper(), name):
+        raise HTTPException(status_code=404, detail=f"Unbekanntes Symbol: {symbol}")
+    if not name.strip():
+        # Freigegeben: gleich neu nachschlagen statt bis zum Nachtlauf warten.
+        request_background_run(get_settings())
+    return RedirectResponse(url=f"/titel/{symbol.upper()}", status_code=303)
+
+
+@app.post("/titel/{symbol}/nachrichten")
+async def ticker_news(
+    request: Request, symbol: str = PathParam(pattern=r"^[A-Za-z0-9.\-]{1,16}$")
+):
+    """Startet die KI-Nachrichtenlage im Hintergrund; die Seite laedt sich selbst neu."""
+    if await _checked_form(request) is None:
+        return _rejected(request, "token")
+    settings = get_settings()
+    if news.available(settings):
+        await run_in_threadpool(news.request_assessment, settings, symbol.upper(), "manual")
+    return RedirectResponse(url=f"/titel/{symbol.upper()}#nachrichten", status_code=303)
+
+
 @app.post("/titel/{symbol}/aufnehmen")
 async def ticker_readd(
     request: Request, symbol: str = PathParam(pattern=r"^[A-Za-z0-9.\-]{1,16}$")
@@ -435,6 +470,10 @@ def ticker_page(
                 session, eigene_momentum, settings
             ),
             "momentum_scores": momentum_view.current_scores(session, settings),
+            "momentum_card": momentum_view.symbol_card(session, settings, detail.symbol),
+            "news": news.latest(session, settings, detail.symbol),
+            "momentum_retro": momentum_view.retro_summary(session, settings),
+            "news_available": news.available(settings),
             "last_run": views.last_run(session),
             "summary": views.summary(session),
             "settings": settings,

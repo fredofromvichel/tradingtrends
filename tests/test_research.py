@@ -126,3 +126,25 @@ def test_begriffsliste_wird_begrenzt():
 def test_leere_begriffsliste_bricht_nicht():
     links = links_for(company_event_terms=[], sector_event_terms=[], analyst_terms=[])
     assert all(l.url.startswith("https://") for l in links)
+
+
+@pytest.mark.parametrize("yahoo", ["Utilities—Diversified", "Utilities – Diversified",
+                                   "utilities-diversified", "Utilities - Diversified"])
+def test_strichvarianten_der_branche(yahoo):
+    from app.research import industry_terms
+
+    mapping = {"Utilities - Diversified": ["Versorger"]}
+    assert industry_terms(yahoo, mapping) == ["Versorger"]
+
+
+@pytest.mark.parametrize("voll,kurz", [
+    ("RWE Aktiengesellschaft", "RWE"),
+    ("TKMS AG & Co KGaA", "TKMS"),
+    ("Dassault Aviation société anonyme", "Dassault Aviation"),
+    ("Carl Zeiss Meditec AG", "Carl Zeiss Meditec"),
+    ("NVIDIA Corporation", "NVIDIA"),
+])
+def test_kurzname_fuer_suchen(voll, kurz):
+    from app.research import short_name
+
+    assert short_name(voll) == kurz

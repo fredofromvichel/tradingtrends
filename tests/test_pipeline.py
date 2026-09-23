@@ -746,6 +746,7 @@ def test_freigeschalteter_endpunkt_hebt_die_sperre_auf(settings, database, monke
             row.last_checked = alt
         for ticker in session.scalars(select(Ticker)).all():
             ticker.outlook_fetched_at = alt
+            ticker.profile_checked_at = alt.replace(tzinfo=None)
 
     # Jetzt liefert Finnhub wieder.
     class WorkingFinnhub(FakeFinnhubBase):

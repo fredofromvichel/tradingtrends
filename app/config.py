@@ -51,6 +51,28 @@ class Research:
 
 
 @dataclass(frozen=True)
+class Ai:
+    """KI-Nachrichtenlage: Suche ueber Firecrawl, Zusammenfassung ueber Mistral.
+
+    Die Keys stehen nicht hier, sondern in der .env - siehe Settings.
+    """
+    enabled: bool = True
+    model: str = "mistral-small-latest"
+    # Zeitfenster der Nachrichtensuche im Google-Format: qdr:d, qdr:w, qdr:m
+    lookback: str = "qdr:w"
+    location: str = "Germany"
+    max_articles: int = 8
+    # Artikeltext mitlesen (kostet Firecrawl-Credits) statt nur Schlagzeile + Auszug.
+    scrape: bool = True
+    article_chars: int = 2500
+    # Automatisch im Nachtlauf, wenn Quartalszahlen so viele Tage bevorstehen.
+    auto_before_earnings_days: int = 3
+    # So lange gilt eine Einschaetzung als frisch; der Nachtlauf erneuert sie nicht.
+    cache_hours: int = 24
+    queries: tuple[str, ...] = ('"{name}" Aktie', '"{name}" stock')
+
+
+@dataclass(frozen=True)
 class Settings:
     # Startliste fuer eine leere Datenbank. Beobachtet wird, was in der
     # Tabelle tickers aktiv ist - siehe app/watchlist.py.
@@ -81,6 +103,10 @@ class Settings:
     bind_addr: str = "127.0.0.1"
     schedule: Schedule = field(default_factory=Schedule)
     research: Research = field(default_factory=Research)
+    ai: Ai = field(default_factory=Ai)
+    # Aus der .env, nie aus config.yaml - Geheimnisse gehoeren nicht ins Repo.
+    firecrawl_api_key: str = ""
+    mistral_api_key: str = ""
     momentum: Momentum = field(default_factory=Momentum)
 
 
@@ -156,6 +182,28 @@ def load_settings(path: Path | None = None) -> Settings:
         rebalance=str(momentum_raw.get("rebalance", "monthly")),
     )
 
+    ai_raw = raw.get("ai") or {}
+    if not isinstance(ai_raw, dict):
+        raise ConfigError("Der Abschnitt 'ai' in config.yaml ist kein Mapping.")
+    ai = Ai(
+        enabled=bool(ai_raw.get("enabled", True)),
+        model=str(os.getenv("MISTRAL_MODEL") or ai_raw.get("model") or Ai.model),
+        lookback=str(ai_raw.get("lookback", Ai.lookback)),
+        location=str(ai_raw.get("location", Ai.location)),
+        max_articles=int(ai_raw.get("max_articles", Ai.max_articles)),
+        scrape=bool(ai_raw.get("scrape", Ai.scrape)),
+        article_chars=int(ai_raw.get("article_chars", Ai.article_chars)),
+        auto_before_earnings_days=int(
+            ai_raw.get("auto_before_earnings_days", Ai.auto_before_earnings_days)
+        ),
+        cache_hours=int(ai_raw.get("cache_hours", Ai.cache_hours)),
+        queries=tuple(str(q) for q in (ai_raw.get("queries") or Ai.queries)),
+    )
+    if not 1 <= ai.max_articles <= 20:
+        raise ConfigError("ai.max_articles muss zwischen 1 und 20 liegen.")
+    if any("{name}" not in q for q in ai.queries):
+        raise ConfigError("Jede Suchvorlage in ai.queries braucht den Platzhalter {name}.")
+
     settings = Settings(
         tickers=tuple(tickers),
         finnhub_api_key=api_key,
@@ -182,6 +230,9 @@ def load_settings(path: Path | None = None) -> Settings:
         schedule=schedule,
         research=research,
         momentum=momentum,
+        ai=ai,
+        firecrawl_api_key=(os.getenv("FIRECRAWL_API_KEY") or "").strip(),
+        mistral_api_key=(os.getenv("MISTRAL_API_KEY") or "").strip(),
     )
     _validate(settings)
     return settings

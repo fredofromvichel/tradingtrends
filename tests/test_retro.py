@@ -177,3 +177,49 @@ def test_rueckrechnung_endet_vor_dem_monat_der_ersten_live_umschichtung(tmp_path
     finally:
         db_module._engine = None
         db_module._SessionLocal = None
+
+
+def test_monatliche_rangfolge_umfasst_auch_das_mittelfeld():
+    from app.retro import monthly_ranks
+
+    series = universum()
+    kalender = series["T0"][0]
+    monate = monthly_ranks(series, lookback_days=252, skip_days=21, group_fraction=0.3,
+                           min_universe=8, start=kalender[300], end=kalender[-1])
+    assert monate
+    assert monate[0].ranks["T9"] == 1 and monate[0].ranks["T4"] == 6
+    assert len(monate[0].ranks) == 10 and monate[0].group_size == 3
+
+
+def test_momentum_karte_mit_rangleiter_und_verlauf(tmp_path):
+    import app.db as db_module
+    from app.config import Momentum, Settings
+    from app.db import init_engine, session_scope
+    from app.models import Price, Ticker
+    from app.momentum_view import symbol_card
+
+    init_engine(tmp_path / "k.db")
+    try:
+        # Kalender endet heute, damit "heute" als letzter Punkt passt.
+        heute = dt.date.today()
+        tage = [d for d in (heute - dt.timedelta(days=i) for i in range(900)) if d.weekday() < 5][::-1]
+        with session_scope() as session:
+            for i in range(10):
+                wachstum = 1 + (i - 4) * 0.0005
+                session.add(Ticker(symbol=f"T{i}", active=True))
+                session.flush()
+                for n, d in enumerate(tage):
+                    session.add(Price(symbol=f"T{i}", date=d, close=100.0 * wachstum ** n))
+        settings = Settings(tickers=(), finnhub_api_key="x", db_path=tmp_path / "k.db",
+                            momentum=Momentum(enabled=True))
+        with session_scope() as session:
+            card = symbol_card(session, settings, "T9")
+        assert (card.rank, card.universe, card.group, card.zone) == (1, 10, 3, "top")
+        assert [c.zone for c in card.ladder] == ["top"] * 3 + ["middle"] * 4 + ["bottom"] * 3
+        assert sum(c.own for c in card.ladder) == 1
+        assert len(card.history) >= 12
+        assert all(p.y == card.history[0].y for p in card.history)    # immer Rang 1 = oben
+        assert card.band_top < card.band_bottom
+    finally:
+        db_module._engine = None
+        db_module._SessionLocal = None

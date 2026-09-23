@@ -1,0 +1,13 @@
+{# Wind statt Befehl: Rueckenwind, Gegenwind, Flaute - beschreibt, wofuer eine
+   Kennzahl spricht, nicht was zu tun ist. Form und Wort tragen die Bedeutung,
+   die Farbe verstaerkt nur (blau/orange wie long/short im Diagramm). #}
+
+{% macro wind_icon(wind, size=22) -%}
+<svg class="wind-icon {{ wind or 'none' }}" width="{{ size }}" height="{{ size }}" aria-hidden="true">
+  <use href="#i-{{ wind or 'none' }}"></use>
+</svg>
+{%- endmacro %}
+
+{% macro wind_word(wind) -%}
+{{ {'rueckenwind': 'Rückenwind', 'gegenwind': 'Gegenwind', 'flaute': 'Flaute'}.get(wind, 'keine Richtung') }}
+{%- endmacro %}

@@ -18,7 +18,7 @@ from app.charting import PhaseInput, PriceChart, build_price_chart
 from app.config import Settings
 from app.indicators import PriceContext, PricePoint, compute_context
 from app.models import AnalystRecommendation, EarningsEvent, Price, Signal, Ticker
-from app.reading_guide import Reading, build as build_readings
+from app.reading_guide import Outlook, Reading, build as build_readings, outlook
 from app.research import ResearchLink, build_research_links
 from app.signals import OPEN, trading_days_elapsed
 from app import market_context, momentum_view
@@ -59,6 +59,31 @@ class AnalystView:
     def buy_share(self) -> float | None:
         return (self.strong_buy + self.buy) / self.total if self.total else None
 
+    @property
+    def sell_share(self) -> float | None:
+        return (self.strong_sell + self.sell) / self.total if self.total else None
+
+    @property
+    def wind(self) -> str | None:
+        """Mehrheit der Analysten als Wind - eine Fremdeinschaetzung, keine eigene."""
+        if not self.total:
+            return None
+        if (self.buy_share or 0) >= 0.6:
+            return "rueckenwind"
+        if (self.sell_share or 0) >= 0.4:
+            return "gegenwind"
+        return "flaute"
+
+    @property
+    def majority(self) -> str:
+        if not self.total:
+            return "keine Daten"
+        if (self.buy_share or 0) >= 0.6:
+            return "mehrheitlich Kaufen"
+        if (self.sell_share or 0) >= 0.4:
+            return "viele Verkaufen"
+        return "überwiegend Halten"
+
 
 @dataclass
 class TickerDetail:
@@ -89,6 +114,15 @@ class TickerDetail:
     momentum_retro_from: dt.date | None = None
     # Lesehilfe: Kennzahlen mit Lesart und Beleglage.
     readings: list[Reading] = field(default_factory=list)
+    name_manual: bool = False
+    # Gesamtlage aus den gerichteten Kennzahlen der Lesehilfe.
+    outlook: Outlook | None = None
+
+    @property
+    def pead_wind(self) -> str | None:
+        if self.pead.state != "ACTIVE" or self.pead.signal is None:
+            return None
+        return "rueckenwind" if self.pead.signal.signal_type == "BUY" else "gegenwind"
 
     def phase_summary(self, retro: bool) -> dict:
         """Kurzbilanz der abgeschlossenen Phasen einer Herkunft."""
@@ -348,6 +382,7 @@ def ticker_detail(session: Session, settings: Settings, symbol: str) -> TickerDe
             )
 
     price_context = compute_context(points)
+    readings = _readings(session, settings, ticker.symbol, price_context)
     retro_history = momentum_view.retro_history(session, settings)
     phases = _phases(
         open_signals + closed_signals,
@@ -370,7 +405,9 @@ def ticker_detail(session: Session, settings: Settings, symbol: str) -> TickerDe
         active=ticker.active,
         context=price_context,
         chart=build_price_chart(chart_points, markers, phases, history=points),
-        readings=_readings(session, settings, ticker.symbol, price_context),
+        readings=readings,
+        outlook=outlook(readings),
+        name_manual=ticker.name_manual,
         phases=phases,
         momentum_retro_from=retro_history.covered_from,
         pead=_pead_status(session, settings, ticker.symbol, open_signals, events),

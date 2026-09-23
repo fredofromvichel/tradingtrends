@@ -10,6 +10,8 @@ Frei von Datenbank- und Netzzugriffen (siehe tests/test_research.py).
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass
 from urllib.parse import quote_plus
 
@@ -72,10 +74,20 @@ def _subject_terms(symbol: str, company: str | None) -> list[str]:
 
 
 _LEGAL_FORMS = (
-    "Inc.", "Inc", "Corporation", "Corp.", "Corp", "Co.", "Company",
+    "Inc.", "Inc", "Corporation", "Corp.", "Corp", "Co.", "Co", "Company",
     "PLC", "plc", "Ltd.", "Ltd", "Limited", "N.V.", "NV", "S.A.", "SA",
     "AG", "SE", "KGaA", "GmbH", "Holdings", "Holding", "Group", "The",
+    # Wie Yahoo europaeische Firmen schreibt: 'RWE Aktiengesellschaft',
+    # 'TKMS AG & Co KGaA', 'Dassault Aviation société anonyme'.
+    "Aktiengesellschaft", "&", "société", "anonyme", "S.p.A.", "SpA",
 )
+
+
+def short_name(company: str | None) -> str | None:
+    """Firmenname ohne Rechtsform - so, wie Schlagzeilen ihn nennen."""
+    if not company:
+        return None
+    return _strip_legal_form(company) or company
 
 
 def _strip_legal_form(company: str) -> str:
@@ -95,11 +107,18 @@ def industry_terms(industry: str | None, mapping: dict[str, list[str]]) -> list[
     """
     if not industry:
         return []
-    key = industry.strip().lower()
+    key = _industry_key(industry)
     for name, terms in mapping.items():
-        if str(name).strip().lower() == key:
+        if _industry_key(str(name)) == key:
             return [str(t) for t in terms]
     return [industry]
+
+
+def _industry_key(text: str) -> str:
+    """Vergleichsform: Yahoo schreibt 'Utilities—Diversified', Finnhub und die
+    Konfiguration 'Utilities - Diversified'."""
+    unified = re.sub(r"\s*[-\u2010-\u2015]\s*", "-", text.strip().lower())
+    return " ".join(unified.split())
 
 
 def build_research_links(

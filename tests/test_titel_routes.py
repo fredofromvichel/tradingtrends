@@ -214,3 +214,56 @@ def test_lesen_ist_von_fremder_herkunft_aus_erlaubt(client):
     """Links von anderen Seiten auf die Anwendung muessen weiter funktionieren."""
     r = client.get("/titel", headers={"origin": "https://example.org"})
     assert r.status_code == 200
+
+
+# -- Name von Hand ----------------------------------------------------------------
+
+
+def test_name_von_hand_eintragen_und_freigeben(client):
+    r = client.post("/titel/AIR.DE/name", data={"csrf": token(client), "name": "  Airbus  SE "},
+                    headers=BROWSER, follow_redirects=False)
+    assert r.headers["location"] == "/titel/AIR.DE"
+    with session_scope() as session:
+        t = session.get(Ticker, "AIR.DE")
+        assert (t.name, t.name_manual) == ("Airbus SE", True)
+    assert "Airbus SE" in client.get("/titel/AIR.DE").text
+
+    client.post("/titel/AIR.DE/name", data={"csrf": token(client), "name": ""}, headers=BROWSER)
+    with session_scope() as session:
+        t = session.get(Ticker, "AIR.DE")
+        assert (t.name, t.name_manual, t.profile_checked_at) == (None, False, None)
+    assert client.laeufe == ["titel"]
+
+
+def test_name_ohne_token_nicht(client):
+    r = client.post("/titel/AIR.DE/name", data={"name": "Evil"}, headers=BROWSER)
+    assert r.status_code == 403
+
+
+# -- KI-Nachrichtenlage -------------------------------------------------------------
+
+
+def test_nachrichtenlage_ohne_keys_erklaert_das_einschalten(client):
+    seite = client.get("/titel/AIR.DE").text
+    assert "FIRECRAWL_API_KEY" in seite and "MISTRAL_API_KEY" in seite
+    r = client.post("/titel/AIR.DE/nachrichten", data={"csrf": token(client)},
+                    headers=BROWSER, follow_redirects=False)
+    assert r.status_code == 303
+
+
+def test_nachrichtenlage_auf_knopfdruck(client, monkeypatch):
+    auftraege = []
+    monkeypatch.setattr("app.main.news.available", lambda s: True)
+    monkeypatch.setattr("app.main.news.request_assessment",
+                        lambda s, sym, trigger="manual": auftraege.append((sym, trigger)) or True)
+    assert "Nachrichtenlage einschätzen" in client.get("/titel/AIR.DE").text
+    r = client.post("/titel/air.de/nachrichten", data={"csrf": token(client)},
+                    headers=BROWSER, follow_redirects=False)
+    assert r.headers["location"] == "/titel/AIR.DE#nachrichten"
+    assert auftraege == [("AIR.DE", "manual")]
+
+
+def test_nachrichtenlage_ohne_token_nicht(client, monkeypatch):
+    monkeypatch.setattr("app.main.news.available", lambda s: True)
+    r = client.post("/titel/AIR.DE/nachrichten", data={}, headers=BROWSER)
+    assert r.status_code == 403

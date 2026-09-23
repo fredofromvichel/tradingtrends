@@ -18,7 +18,7 @@ from app.config import Settings
 from app.explain import Explanation, explain_momentum
 from app.market_context import MarketContext
 from app.models import MomentumRebalance, MomentumSignal, Price, Ticker
-from app.momentum import momentum_score, required_history
+from app.momentum import group_size, momentum_score, required_history
 from app.signals import CLOSED, OPEN, trading_days_elapsed
 from app.stats import MIN_SAMPLE, estimate_mean, estimate_rate
 
@@ -319,3 +319,126 @@ def retro_history(
 
 def retro_summary(session: Session, settings: Settings) -> dict:
     return retro.summarize(retro_history(session, settings).positions)
+
+
+# -- Momentum-Karte auf dem Steckbrief -----------------------------------------
+
+RANKS_KEY = "momentum_monthly_ranks"
+
+
+@dataclass(frozen=True)
+class LadderCell:
+    symbol: str
+    rank: int
+    zone: str       # top | middle | bottom
+    own: bool
+
+
+@dataclass(frozen=True)
+class RankPoint:
+    day: dt.date
+    rank: int
+    universe: int
+    x: float
+    y: float
+
+
+@dataclass
+class MomentumCard:
+    rank: int | None
+    universe: int
+    group: int
+    zone: str | None
+    score: float | None
+    ladder: list[LadderCell]
+    history: list[RankPoint]
+    line: str = ""
+    width: int = 260
+    height: int = 64
+    pad: float = 6.0
+    band_top: float = 0.0       # Unterkante der Spitzenzone
+    band_bottom: float = 0.0    # Oberkante der Schlusszone
+
+    @property
+    def start(self) -> RankPoint | None:
+        return self.history[0] if self.history else None
+
+
+def _zone(rank: int, universe: int, group: int) -> str:
+    if rank <= group:
+        return "top"
+    if rank > universe - group:
+        return "bottom"
+    return "middle"
+
+
+def monthly_ranks(session: Session, settings: Settings,
+                  today: dt.date | None = None) -> list[retro.RankMonth]:
+    cached = session.info.get(RANKS_KEY)
+    if cached is not None:
+        return cached
+    cfg = settings.momentum
+    symbols = watchlist.active_symbols(session)
+    context = market_context.series(session, symbols)
+    series = {s: (context.dates(s), context.close_series(s)) for s in symbols if context.dates(s)}
+    today = today or dt.date.today()
+    months = retro.monthly_ranks(
+        series,
+        lookback_days=cfg.lookback_days,
+        skip_days=cfg.skip_days,
+        group_fraction=cfg.group_fraction,
+        min_universe=cfg.min_universe,
+        start=_months_back(today, retro.MONTHS),
+        end=today + dt.timedelta(days=1),
+    )
+    session.info[RANKS_KEY] = months
+    return months
+
+
+def symbol_card(session: Session, settings: Settings, symbol: str) -> MomentumCard | None:
+    """Rangleiter und Rangverlauf eines Titels fuer den Steckbrief."""
+    cfg = settings.momentum
+    if not cfg.enabled:
+        return None
+    scores = [r for r in current_scores(session, settings) if r["rank"] is not None]
+    universe = len(scores)
+    if universe == 0:
+        return MomentumCard(None, 0, 0, None, None, [], [])
+    group = group_size(universe, cfg.group_fraction) if universe >= 2 else 1
+    mine = next((r for r in scores if r["symbol"] == symbol), None)
+    ladder = [
+        LadderCell(r["symbol"], r["rank"], _zone(r["rank"], universe, group),
+                   r["symbol"] == symbol)
+        for r in scores
+    ]
+
+    card = MomentumCard(
+        rank=mine["rank"] if mine else None,
+        universe=universe,
+        group=group,
+        zone=_zone(mine["rank"], universe, group) if mine else None,
+        score=mine["score"] if mine else None,
+        ladder=ladder,
+        history=[],
+    )
+
+    # Verlauf: Monatsanfaenge plus heute. Rang 1 oben.
+    punkte = [(m.day, m.ranks[symbol], m.universe_size)
+              for m in monthly_ranks(session, settings) if symbol in m.ranks]
+    if mine and (not punkte or punkte[-1][0] != dt.date.today()):
+        punkte.append((dt.date.today(), mine["rank"], universe))
+    if len(punkte) >= 2:
+        inner_w = card.width - 2 * card.pad
+        inner_h = card.height - 2 * card.pad
+
+        def y_of(rank: int, n: int) -> float:
+            return card.pad + inner_h * ((rank - 1) / max(1, n - 1))
+
+        for i, (day, rank, n) in enumerate(punkte):
+            x = card.pad + inner_w * i / (len(punkte) - 1)
+            card.history.append(RankPoint(day, rank, n, round(x, 2), round(y_of(rank, n), 2)))
+        card.line = " ".join(f"{p.x},{p.y}" for p in card.history)
+        card.band_top = round(y_of(group, universe) + inner_h / max(1, universe - 1) / 2, 2)
+        card.band_bottom = round(y_of(universe - group + 1, universe)
+                                 - inner_h / max(1, universe - 1) / 2, 2)
+    return card

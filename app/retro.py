@@ -145,14 +145,10 @@ def momentum_history(
     history = RetroHistory()
 
     for day in rebalance_dates(calendar, start, end):
-        scores: dict[str, float | None] = {}
-        for symbol, (dates, closes) in series.items():
-            # Nur Kurse bis einschliesslich des Umschichtungstags - was danach
-            # kam, wusste der Lauf an diesem Tag nicht.
-            cut = bisect.bisect_right(dates, day)
-            scores[symbol] = momentum_score(closes[:cut], lookback_days, skip_days)
-
-        basket = rank_universe(scores, group_fraction, min_universe)
+        # Nur Kurse bis einschliesslich des Umschichtungstags - was danach
+        # kam, wusste der Lauf an diesem Tag nicht.
+        basket = rank_universe(_scores_at(series, day, lookback_days, skip_days),
+                               group_fraction, min_universe)
         if basket.is_empty:
             history.months.append(
                 RetroMonth(day, basket.universe_size, basket.group_size, reason=basket.reason)
@@ -205,6 +201,51 @@ def momentum_history(
             RetroMonth(day, basket.universe_size, basket.group_size, tuple(positions))
         )
     return history
+
+
+@dataclass(frozen=True)
+class RankMonth:
+    """Rangfolge aller bewertbaren Titel an einem Monatsanfang."""
+    day: dt.date
+    universe_size: int
+    group_size: int
+    ranks: dict[str, int]
+
+
+def _scores_at(series: Series, day: dt.date, lookback_days: int,
+               skip_days: int) -> dict[str, float | None]:
+    scores: dict[str, float | None] = {}
+    for symbol, (dates, closes) in series.items():
+        cut = bisect.bisect_right(dates, day)
+        scores[symbol] = momentum_score(closes[:cut], lookback_days, skip_days)
+    return scores
+
+
+def monthly_ranks(
+    series: Series,
+    *,
+    lookback_days: int,
+    skip_days: int,
+    group_fraction: float,
+    min_universe: int,
+    start: dt.date,
+    end: dt.date,
+) -> list[RankMonth]:
+    """Rangfolge je Monatsanfang - beschreibend, fuer den Rangverlauf eines Titels.
+
+    Anders als momentum_history fuer jeden Monat bis heute, auch wo live
+    umgeschichtet wurde: Die Rangfolge ist eine Rechnung aus Kursen, kein Signal.
+    """
+    calendar = sorted({d for dates, _ in series.values() for d in dates})
+    out: list[RankMonth] = []
+    for day in rebalance_dates(calendar, start, end):
+        basket = rank_universe(_scores_at(series, day, lookback_days, skip_days),
+                               group_fraction, min_universe)
+        if not basket.all_ranked:
+            continue
+        out.append(RankMonth(day, basket.universe_size, basket.group_size,
+                             {r.symbol: r.rank for r in basket.all_ranked}))
+    return out
 
 
 def summarize(positions: list[RetroPosition]) -> dict:

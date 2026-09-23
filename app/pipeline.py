@@ -18,6 +18,7 @@ from app.models import (
     EarningsEvent,
     MomentumRebalance,
     MomentumSignal,
+    NewsAssessment,
     PipelineRun,
     Price,
     Signal,
@@ -42,9 +43,9 @@ from app.sources.finnhub_client import (
     FinnhubTransientError,
     RawEarnings,
 )
-from app import coverage
+from app import coverage, news
 from app.sources.earnings import FINNHUB, YAHOO
-from app.sources import yahoo_earnings
+from app.sources import yahoo_earnings, yahoo_profile
 from app.sources.prices import fetch_prices
 from app.watchlist import seed_tickers
 
@@ -65,6 +66,9 @@ BERLIN = pytz.timezone("Europe/Berlin")
 
 # Endpunktpfade - muessen zu denen im Finnhub-Client passen.
 PROFILE_ENDPOINT = "/stock/profile2"
+# Fehlen Stammdaten auch nach einem Abruf, wird erst nach so vielen Tagen
+# erneut gefragt.
+PROFILE_RECHECK_DAYS = 30
 CALENDAR_ENDPOINT = "/calendar/earnings"
 EARNINGS_ENDPOINT = "/stock/earnings"
 RECOMMENDATION_ENDPOINT = "/stock/recommendation"
@@ -149,6 +153,8 @@ def _run_locked(
 
         _step(result, "Stammdaten", lambda: _ingest_profiles(settings))
         _step(result, "Ausblick", lambda: _ingest_outlook(settings))
+        if news.available(settings):
+            _step(result, "Nachrichtenlage", lambda: _auto_news(settings, result))
         _step(result, "Earnings-Abruf", lambda: _ingest_earnings(settings, result))
         _step(
             result,
@@ -292,18 +298,22 @@ def _persist_run(run_id: int, result: RunResult) -> None:
 
 
 def _ingest_profiles(settings: Settings) -> None:
-    """Holt Firmenname und Branche fuer Ticker, bei denen sie noch fehlen.
+    """Holt Firmenname, Branche und Sektor fuer Titel, bei denen etwas fehlt.
 
-    Laeuft praktisch nur beim ersten Durchgang: sobald ein Name in der
-    Datenbank steht, wird das Symbol uebersprungen. Ein fehlendes Profil ist
-    kein Grund, den Lauf zu gefaehrden - die Anzeige faellt dann auf das
-    Symbol zurueck.
+    Finnhub zuerst, wo es darf (US-Titel), Yahoo fuer den Rest und fuer alles,
+    was Finnhub offenliess. Ein von Hand eingetragener Name bleibt unangetastet.
+    Titel, zu denen keine Quelle etwas weiss, werden erst nach
+    PROFILE_RECHECK_DAYS erneut gefragt - nicht bei jedem Lauf.
     """
+    now = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
+    recheck = now - dt.timedelta(days=PROFILE_RECHECK_DAYS)
     with session_scope() as session:
         pending = list(
             session.scalars(
                 select(Ticker.symbol).where(
-                    Ticker.active.is_(True), Ticker.name.is_(None)
+                    Ticker.active.is_(True),
+                    (Ticker.name.is_(None)) | (Ticker.industry.is_(None)),
+                    (Ticker.profile_checked_at.is_(None)) | (Ticker.profile_checked_at < recheck),
                 )
             ).all()
         )
@@ -317,36 +327,56 @@ def _ingest_profiles(settings: Settings) -> None:
         min_interval_seconds=settings.finnhub_min_interval_seconds,
     ) as client:
         for symbol in pending:
+            found: dict[str, str | None] = {}
+
             with session_scope() as session:
-                if coverage.should_skip(
+                finnhub_ok = yahoo_earnings.is_us_symbol(symbol) and not coverage.should_skip(
                     session, symbol, PROFILE_ENDPOINT, settings.finnhub_recheck_days
-                ):
-                    continue
+                )
+            if finnhub_ok:
+                try:
+                    profile = client.company_profile(symbol)
+                    if profile.name:
+                        found.update(name=profile.name, industry=profile.industry,
+                                     exchange=profile.exchange)
+                        with session_scope() as session:
+                            coverage.record_success(session, symbol, PROFILE_ENDPOINT)
+                except FinnhubAuthError as exc:
+                    raise RuntimeError(str(exc)) from exc
+                except FinnhubForbiddenError as exc:
+                    with session_scope() as session:
+                        coverage.record_block(session, symbol, exc.endpoint)
+                except (FinnhubError, FinnhubTransientError) as exc:
+                    log.info("Finnhub-Profil fuer %s nicht abrufbar (%s) - frage Yahoo.", symbol, exc)
 
-            try:
-                profile = client.company_profile(symbol)
-            except FinnhubAuthError as exc:
-                raise RuntimeError(str(exc)) from exc
-            except FinnhubForbiddenError as exc:
-                with session_scope() as session:
-                    coverage.record_block(session, symbol, exc.endpoint)
-                continue
-            except (FinnhubError, FinnhubTransientError) as exc:
-                failures.append(f"{symbol} ({exc})")
-                continue
-
-            if profile.name is None:
-                failures.append(f"{symbol} (kein Profil geliefert)")
-                continue
+            if not found.get("name") or not found.get("industry"):
+                try:
+                    yahoo = yahoo_profile.fetch_profile(symbol)
+                except yahoo_profile.YahooProfileError as exc:
+                    failures.append(f"{symbol} ({exc})")
+                    continue        # Netzfehler: beim naechsten Lauf erneut
+                if yahoo is not None:
+                    for key in ("name", "industry", "exchange", "sector"):
+                        if not found.get(key):
+                            found[key] = getattr(yahoo, key)
 
             with session_scope() as session:
-                coverage.record_success(session, symbol, PROFILE_ENDPOINT)
                 row = session.get(Ticker, symbol)
-                if row is not None:
-                    row.name = profile.name
-                    row.industry = profile.industry
-                    row.exchange = profile.exchange
-            log.info("Stammdaten: %s = %s (%s)", symbol, profile.name, profile.industry)
+                if row is None:
+                    continue
+                if found.get("name") and not row.name_manual and not row.name:
+                    row.name = found["name"][:128]
+                if found.get("industry") and not row.industry:
+                    row.industry = found["industry"][:96]
+                if found.get("exchange") and not row.exchange:
+                    row.exchange = found["exchange"][:96]
+                if found.get("sector") and not row.sector:
+                    row.sector = found["sector"][:64]
+                row.profile_checked_at = now
+            if found:
+                log.info("Stammdaten: %s = %s (%s)", symbol, found.get("name"), found.get("industry"))
+            else:
+                log.info("Stammdaten: zu %s weiss keine Quelle etwas.", symbol)
 
     if failures:
         raise RuntimeError(
@@ -1128,6 +1158,36 @@ def _rebalance_momentum(settings: Settings, result: RunResult) -> None:
 # ---------------------------------------------------------------------------
 # Hilfsfunktionen
 # ---------------------------------------------------------------------------
+
+
+def _auto_news(settings: Settings, result: RunResult) -> None:
+    """KI-Nachrichtenlage fuer Titel, deren Zahlen in wenigen Tagen anstehen.
+
+    Nacheinander und im Lauf selbst - die freien Tarife begrenzen Anfragen je
+    Minute. Ein Fehler hier ist ein Hinweis, kein Fehler des Laufs: die
+    Nachrichtenlage ist eine Zugabe, die Signale haengen nicht daran.
+    """
+    with session_scope() as session:
+        faellig = news.due_for_auto(session, settings)
+        auftraege = []
+        for symbol in faellig:
+            row = news.create_pending(session, symbol, "auto")
+            if row is not None:
+                auftraege.append((symbol, row.id))
+    if not auftraege:
+        return
+    log.info("Nachrichtenlage vor Quartalszahlen fuer: %s", ", ".join(s for s, _ in auftraege))
+    gescheitert: list[str] = []
+    for symbol, assessment_id in auftraege:
+        news.run_assessment(settings, symbol, assessment_id)
+        with session_scope() as session:
+            row = session.get(NewsAssessment, assessment_id)
+            if row is not None and row.status == "error":
+                gescheitert.append(f"{symbol} ({row.error})")
+    if gescheitert:
+        result.notes.append(
+            "KI-Nachrichtenlage nicht möglich für: " + "; ".join(gescheitert[:3])
+        )
 
 
 def trading_day_complete(now: dt.datetime | None = None) -> bool:

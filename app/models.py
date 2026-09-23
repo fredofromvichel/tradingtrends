@@ -12,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy import func
@@ -42,6 +43,12 @@ class Ticker(Base):
     name: Mapped[str | None] = mapped_column(String(128), default=None)
     industry: Mapped[str | None] = mapped_column(String(96), default=None)
     exchange: Mapped[str | None] = mapped_column(String(96), default=None)
+    sector: Mapped[str | None] = mapped_column(String(64), default=None)
+    # Von Hand eingetragener Name - wird von keinem Abruf ueberschrieben.
+    name_manual: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Letzter Versuch, fehlende Stammdaten zu holen. Verhindert, dass ein Titel,
+    # zu dem keine Quelle etwas weiss, bei jedem Lauf erneut abgefragt wird.
+    profile_checked_at: Mapped[dt.datetime | None] = mapped_column(DateTime, default=None)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     # Naechster erwarteter Meldetermin laut Finnhub-Kalender.
     next_earnings_date: Mapped[dt.date | None] = mapped_column(Date, default=None)
@@ -265,3 +272,26 @@ class PipelineRun(Base):
     # Hinweise ohne Fehlercharakter - etwa Titel, die der Finnhub-Tarif
     # dauerhaft nicht abdeckt. Setzen den Lauf nicht auf PARTIAL.
     notes: Mapped[str | None] = mapped_column(String(2000), default=None)
+
+
+class NewsAssessment(Base):
+    """KI-Zusammenfassung der aktuellen Nachrichtenlage eines Titels.
+
+    Beschreibt, was berichtet wird - mit Quelle je Aussage. Fliesst in kein
+    Signal und keine Statistik ein.
+    """
+
+    __tablename__ = "news_assessments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(ForeignKey("tickers.symbol"), index=True, nullable=False)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime, default=None)
+    trigger: Mapped[str] = mapped_column(String(8), default="manual", nullable=False)
+    status: Mapped[str] = mapped_column(String(8), default="pending", nullable=False)
+    model: Mapped[str | None] = mapped_column(String(64), default=None)
+    overall: Mapped[str | None] = mapped_column(String(12), default=None)
+    article_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Gepruefte Modellantwort samt Artikelliste als JSON.
+    payload: Mapped[str | None] = mapped_column(Text, default=None)
+    error: Mapped[str | None] = mapped_column(Text, default=None)

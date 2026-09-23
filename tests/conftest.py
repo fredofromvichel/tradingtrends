@@ -35,3 +35,9 @@ def kein_yahoo_im_test(monkeypatch):
             return None
 
     monkeypatch.setattr(yfinance, "Ticker", UnbekanntesSymbol)
+
+
+@pytest.fixture(autouse=True)
+def keine_yahoo_suche_im_test(monkeypatch):
+    """Die Stammdaten fragen die Yahoo-Suche - im Test weiss sie nichts."""
+    monkeypatch.setattr("app.sources.yahoo_profile.fetch_profile", lambda symbol: None)

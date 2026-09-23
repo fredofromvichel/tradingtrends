@@ -114,7 +114,27 @@
     apply();
   }
 
+  /* Auf dem Handy werden Tabellen zu Karten. Dafuer braucht jede Zelle den
+     Namen ihrer Spalte - aus dem Tabellenkopf, damit die Vorlagen ihn nicht
+     doppelt fuehren. Tabellen mit data-no-cards bleiben Tabellen. */
+  function makeCards(table) {
+    if (table.hasAttribute("data-no-cards") || !table.tHead) return;
+    var labels = Array.prototype.map.call(table.tHead.rows[0].cells, function (th) {
+      return th.textContent.trim();
+    });
+    Array.prototype.forEach.call(table.tBodies, function (body) {
+      Array.prototype.forEach.call(body.rows, function (row) {
+        if (row.classList.contains("explain-row")) return;
+        Array.prototype.forEach.call(row.cells, function (cell, i) {
+          if (!cell.hasAttribute("data-label")) cell.setAttribute("data-label", labels[i] || "");
+        });
+      });
+    });
+    table.classList.add("cards");
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
+    document.querySelectorAll(".scroll > table").forEach(makeCards);
     document.querySelectorAll("table[data-sortable]").forEach(makeSortable);
     document.querySelectorAll("[data-explain]").forEach(makeExplainable);
     document.querySelectorAll("[data-filter]").forEach(makeFilterable);

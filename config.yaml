@@ -208,6 +208,57 @@ research:
     Machinery: [Maschinenbau, machinery sector]
     "Food Products": [Lebensmittelbranche, food industry]
     "Beverages": [Getränkeindustrie, beverage industry]
+    # Yahoo-Bezeichnungen - so heissen die Branchen bei Titeln ausserhalb der
+    # USA, deren Stammdaten von Yahoo kommen.
+    "Medical Instruments & Supplies": [Medizintechnik, medical technology]
+    "Medical Devices": [Medizintechnik, medical devices]
+    Railroads: [Bahnindustrie, Schienenfahrzeuge, rail industry]
+    "Specialty Industrial Machinery": [Maschinenbau, Industrieausrüstung, industrial machinery]
+    "Utilities - Diversified": [Versorger, Energieversorger, utilities sector]
+    "Utilities - Renewable": [erneuerbare Energien, renewable energy]
+    "Travel Services": [Tourismusbranche, Reisebranche, travel industry]
+    "Information Technology Services": [IT-Dienstleister, IT services]
+    "Software - Application": [Softwarebranche, software industry]
+    "Software - Infrastructure": [Softwarebranche, cloud software]
+    "Internet Content & Information": [Internetkonzerne, internet sector]
+    "Internet Retail": [Onlinehandel, e-commerce]
+    "Consumer Electronics": [Unterhaltungselektronik, consumer electronics]
+    Entertainment: [Unterhaltungsbranche, Streaming, entertainment industry]
+    "Electrical Equipment & Parts": [Elektrotechnik, electrical equipment]
+
+# ---------------------------------------------------------------------------
+# KI-Nachrichtenlage auf dem Steckbrief
+#
+# Sucht aktuelle Meldungen ueber Firecrawl und laesst sie von einem Mistral-
+# Modell zusammenfassen - mit Quellenangabe je Aussage, ohne Kaufempfehlung.
+# Fliesst in kein Signal ein.
+#
+# Die Keys gehoeren in die .env, NICHT hierher:
+#   FIRECRAWL_API_KEY=fc-...
+#   MISTRAL_API_KEY=...
+#   MISTRAL_MODEL=mistral-small-latest   (optional, ueberschreibt 'model')
+# Danach 'make up' (nicht 'make restart'). Ohne beide Keys ist die Funktion aus.
+# ---------------------------------------------------------------------------
+ai:
+  enabled: true
+  model: mistral-small-latest
+  # Zeitfenster der Suche: qdr:d (Tag), qdr:w (Woche), qdr:m (Monat)
+  lookback: "qdr:w"
+  location: Germany
+  # Hoechstens so viele Artikel je Einschaetzung.
+  max_articles: 8
+  # Artikeltext mitlesen statt nur Schlagzeile und Auszug. Genauer, kostet
+  # aber Firecrawl-Credits je Artikel.
+  scrape: true
+  article_chars: 2500
+  # Automatisch im Nachtlauf fuer Titel, deren Zahlen in so vielen Tagen anstehen.
+  auto_before_earnings_days: 3
+  # So lange gilt eine Einschaetzung als aktuell (Stunden).
+  cache_hours: 24
+  # Suchvorlagen, {name} = Firmenname ohne Rechtsform.
+  queries:
+    - '"{name}" Aktie'
+    - '"{name}" stock'
 
 # Wie alt dürfen Analystenempfehlungen und der nächste Earnings-Termin werden,
 # bevor sie neu abgerufen werden (Tage).

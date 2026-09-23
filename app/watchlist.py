@@ -167,3 +167,23 @@ def config_block(session: Session) -> str:
         comment = f"  # {r.name}" if r.name else ""
         lines.append(f"  - {r.symbol.ljust(width)}{comment}".rstrip())
     return "\n".join(lines) + "\n"
+
+
+def set_name(session: Session, symbol: str, name: str | None) -> Ticker | None:
+    """Traegt einen Namen von Hand ein - oder gibt ihn frei (leer).
+
+    Ein Handeintrag wird von keinem Abruf ueberschrieben. Leer heisst: wieder
+    automatisch, und der naechste Lauf fragt die Quellen erneut.
+    """
+    row = session.get(Ticker, symbol)
+    if row is None:
+        return None
+    name = " ".join((name or "").split())[:128]
+    if name:
+        row.name = name
+        row.name_manual = True
+    else:
+        row.name = None
+        row.name_manual = False
+        row.profile_checked_at = None
+    return row
