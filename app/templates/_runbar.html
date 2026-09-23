@@ -1,0 +1,34 @@
+<div class="card">
+  <div class="bar">
+    <div class="runinfo">
+      {% if last_run %}
+        Letzter Lauf <strong>{{ last_run.started_at|dtfmt }}</strong> ·
+        Status <code>{{ last_run.status }}</code>
+        <span class="run-counts">
+          <span title="Neu erfasste Quartalsmeldungen">{{ last_run.events_ingested }} Events</span>
+          <span title="Neu geschriebene von insgesamt abgerufenen Kurszeilen. Ein Wiederholungslauf schreibt 0 neue, obwohl der Abruf funktioniert hat.">{{ last_run.prices_ingested }}/{{ last_run.prices_fetched }} Kurse</span>
+          <span title="PEAD-Signale: eröffnet / geschlossen">PEAD {{ last_run.signals_opened }}/{{ last_run.signals_closed }}</span>
+          <span title="Momentum-Positionen: eröffnet / geschlossen">Momentum {{ last_run.momentum_opened }}/{{ last_run.momentum_closed }}</span>
+        </span>
+      {% else %}
+        Noch kein Lauf ausgeführt – Button rechts startet den ersten.
+      {% endif %}
+    </div>
+    <form method="post" action="/run-now" onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Läuft …'">
+      <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token() }}">
+      <button type="submit">Jetzt aktualisieren</button>
+    </form>
+  </div>
+
+  {% if last_run and last_run.notes %}
+    {# Bekannte Tarif-Lücken: Hinweis, kein Fehler. #}
+    <p class="runinfo run-note">{{ last_run.notes }}</p>
+  {% endif %}
+
+  {% if last_run and last_run.message %}
+    <details class="run-errors">
+      <summary>Fehlerdetails des letzten Laufs</summary>
+      <p>{{ last_run.message }}</p>
+    </details>
+  {% endif %}
+</div>

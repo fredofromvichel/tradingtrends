@@ -1,0 +1,43 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pead-signal-poc:latest
+    container_name: pead-poc
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DB_PATH: /data/poc.db
+      CONFIG_PATH: /app/config.yaml
+      TZ: ${TZ:-Europe/Berlin}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      RUN_ON_STARTUP: ${RUN_ON_STARTUP:-false}
+      APP_UID: ${APP_UID:-1000}
+      APP_GID: ${APP_GID:-1000}
+      # Die Anwendung muss wissen, ob ihr Port im Netz haengt - und wen sie
+      # durchlassen darf.
+      BIND_ADDR: ${BIND_ADDR:-127.0.0.1}
+      ALLOWED_IPS: ${ALLOWED_IPS:-}
+    ports:
+      # Standardmaessig NUR auf dem Loopback des Servers. Die Anwendung hat
+      # keine Authentifizierung - Zugriff von aussen ueber SSH-Tunnel:
+      #   ssh -N -L 8000:localhost:8000 user@server
+      - "${BIND_ADDR:-127.0.0.1}:${HOST_PORT:-8000}:8000"
+    volumes:
+      # SQLite-Datei und config.yaml liegen auf dem Host: Neustarts und
+      # Rebuilds verlieren keine Daten, Parameter sind ohne Rebuild aenderbar.
+      - ./data:/data
+      - ./config.yaml:/app/config.yaml:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=5).status == 200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

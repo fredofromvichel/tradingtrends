@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% set active = 'history' %}
+{% block title %}Verlauf · PEAD-Signal-POC{% endblock %}
+
+{% from "_retro.html" import retro_line, retro_tag %}
+{% block content %}
+{% include "_stats.html" %}
+
+{% include "_legend.html" %}
+
+<section class="card">
+  <p class="runinfo" style="margin:0">
+    Renditen sind brutto – ohne Gebühren, Spread, Slippage und Steuern.
+    SELL-Signale werden als Leerverkauf gerechnet: ein fallender Kurs ergibt dort
+    einen positiven Ertrag. Stammt ein Teil der Positionen aus
+    <code>make seed</code>, sind diese kein sauberer Backtest (siehe README).
+  </p>
+</section>
+
+<section>
+  <h2>Geschlossene Signale</h2>
+  <div class="scroll">
+    {% if signals %}
+    <table data-sortable>
+      <thead>
+        <tr>
+          <th title="Börsenkürzel. Mouseover zeigt Firmenname, Branche und Börse."><span>Symbol</span></th>
+          <th title="Klassifikation der Pipeline, keine Anlageempfehlung. SELL wird als Leerverkauf gerechnet."><span>Signal</span></th>
+          <th title="Tag der Quartalsmeldung, der das Signal ausgelöst hat"><span>Trigger</span></th>
+          <th title="Erster nach der Meldung tatsächlich handelbarer Schlusskurs"><span>Einstieg</span></th>
+          <th class="num" title="Schlusskurs am Einstiegstag, split- und dividendenbereinigt"><span>Einstiegskurs</span></th>
+          <th title="Handelstag, an dem die Haltedauer abgelaufen war"><span>Ausstieg</span></th>
+          <th class="num" title="Schlusskurs am Ausstiegstag"><span>Ausstiegskurs</span></th>
+          <th class="num" title="Haltedauer in Handelstagen (Börsentage, ohne Wochenenden und Feiertage)"><span>Haltedauer</span></th>
+          <th class="num" title="Standardized Unexpected Earnings: Überraschung geteilt durch die übliche Schwankung dieses Unternehmens"><span>SUE</span></th>
+          <th class="num" title="Abweichung des tatsächlichen Gewinns je Aktie von der Analystenschätzung"><span>Surprise</span></th>
+          <th class="num" title="Endgültiges Ergebnis, brutto – ohne Gebühren, Spread und Steuern"><span>Rendite</span></th>
+          <th class="num" title="Was die übrigen beobachteten Titel im selben Zeitraum im Mittel machten"><span>Vergleich</span></th>
+          <th title="Rechenweg aufklappen"><span>Warum?</span></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for s in signals %}
+        <tr>
+          <td class="sym" title="{{ s.tooltip }}">
+            <a href="/titel/{{ s.symbol }}">{{ s.symbol }}</a>
+            {% if s.company %}<span class="company">{{ s.company }}</span>{% endif %}
+          </td>
+          <td><span class="tag {{ 'buy' if s.signal_type == 'BUY' else 'sell' }}">{{ s.signal_type }}</span>{% if s.retro %} {{ retro_tag() }}{% endif %}</td>
+          <td>{{ s.trigger_date }}</td>
+          <td>{{ s.entry_date or '–' }}</td>
+          <td class="num">{{ s.entry_price|num }}</td>
+          <td>{{ s.exit_date or '–' }}</td>
+          <td class="num">{{ s.exit_price|num }}</td>
+          <td class="num">{{ s.holding_period_days }} HT</td>
+          <td class="num">{{ s.sue|sue }}</td>
+          <td class="num">{{ s.surprise_pct|pct(1) }}</td>
+          <td class="num {{ 'pos' if (s.return_pct or 0) > 0 else ('neg' if s.return_pct else '') }}"
+              data-sort="{{ s.return_pct or 0 }}">{{ s.return_pct|pct }}</td>
+          <td class="num muted" data-sort="{{ s.benchmark_return_pct or 0 }}">{{ s.benchmark_return_pct|pct }}</td>
+          <td class="why">{% set e = explanations.get(s.id) %}{% if e %}<button type="button" class="why-btn" data-explain aria-expanded="false">Warum?</button>{% endif %}</td>
+        </tr>
+        {% if e %}{% include "_explain_row.html" %}{% endif %}
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <p class="empty">Noch keine Position geschlossen. Das passiert
+      {{ settings.holding_period_days }} Handelstage nach dem jeweiligen Einstieg.</p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

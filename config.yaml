@@ -1,0 +1,265 @@
+# ===========================================================================
+# PEAD-Signal-POC - Konfiguration
+# Aenderungen wirken nach:  make restart
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# STARTLISTE - wirkt nur auf eine LEERE Datenbank.
+#
+# Die beobachteten Titel pflegst du in der Oberflaeche unter /titel: dort
+# pruefen, aufnehmen, entfernen. Gespeichert wird in der Datenbank; diese
+# Liste hier wird danach nicht mehr gelesen, auch nicht nach einem git pull.
+# Gebraucht wird sie nur bei einer Neuinstallation oder nach 'make reset'.
+# Den passenden Block fuer deine aktuelle Liste zeigt /titel -> "Liste sichern".
+#
+# Schreibweise wie bei Yahoo (US-Ticker z. B. AAPL, Xetra z. B. SAP.DE).
+# ---------------------------------------------------------------------------
+tickers:
+  - AAPL
+  - MSFT
+  - NVDA
+  - GOOGL
+  - AMZN
+  - META
+  - TSLA
+  - AVGO
+  - JPM
+  - V
+  - WMT
+  - XOM
+  - UNH
+  - JNJ
+  - PG
+  - HD
+  - COST
+  - CRM
+  - AMD
+  - NFLX
+
+# ---------------------------------------------------------------------------
+# Signal-Schwellen
+# Startwerte an der Literatur orientiert, NICHT optimiert.
+# surprise_pct wird als Bruch gefuehrt: 0.05 == +5 %.
+# ---------------------------------------------------------------------------
+sue_threshold_buy: 1.0
+sue_threshold_sell: -1.0
+surprise_pct_fallback_buy: 0.05
+surprise_pct_fallback_sell: -0.05
+
+# Mindestanzahl historischer Surprises, ab der SUE berechnet wird.
+# Darunter greift der surprise_pct-Fallback.
+min_history_for_sue: 4
+
+# ---------------------------------------------------------------------------
+# Positions- und Abruf-Parameter
+# ---------------------------------------------------------------------------
+# Haltedauer in HANDELSTAGEN (gezaehlt ueber vorhandene Kurszeilen).
+holding_period_days: 20
+
+# Wie viele Kalendertage rueckwaerts der Earnings-Kalender je Lauf abgefragt
+# wird (Puffer gegen verpasste Laeufe und Wochenenden).
+lookback_days_earnings: 3
+
+# Kurshistorie je Titel (Kalendertage). Wird einmal geholt - fuer neue Titel
+# sofort, fuer alle anderen beim naechsten Lauf, wenn der Wert erhoeht wurde.
+# 800 Tage reichen, um die Momentum-Signale der letzten zwoelf Monate
+# rueckwirkend zu berechnen: jede Monatsrangfolge braucht selbst zwoelf
+# Monate Vorlauf. Mit weniger zeigt das Kursdiagramm entsprechend kuerzer
+# zurueck. Mindestens das Formationsfenster (rund 450), das prueft der Start.
+price_backfill_days: 800
+
+# Kursfenster bei jedem weiteren Lauf (Kalendertage).
+price_refresh_days: 7
+
+# Pause zwischen zwei Finnhub-Requests in Sekunden (Free-Tier: 60 Calls/Min).
+finnhub_min_interval_seconds: 0.25
+
+# ---------------------------------------------------------------------------
+# Scheduler (In-Process, APScheduler)
+# ---------------------------------------------------------------------------
+schedule:
+  enabled: true
+  # Standard-Crontab-Syntax: Minute Stunde Tag Monat Wochentag
+  # 22:30 Europe/Berlin = nach US-Boersenschluss.
+  cron: "30 22 * * 1-5"
+  timezone: "Europe/Berlin"
+
+# ===========================================================================
+# Zweite Signalquelle: Cross-Sectional-Momentum
+#
+# Getrennt von PEAD gefuehrt - eigene Tabellen, eigene Seite, eigene Statistik.
+# Niemals zu einer Zahl verrechnet: sonst waere bei einem Ergebnis nie klar,
+# welche Logik es getragen hat.
+#
+# WICHTIG: Der dokumentierte Faktor rangiert ueber Hunderte bis Tausende
+# Aktien. Bei 20 US-Large-Caps aus wenigen Branchen misst die Rangfolge
+# ueberwiegend Branchenrotation. Die Ergebnisse taugen zur Pruefung der
+# Mechanik, nicht als Beleg fuer den Faktor.
+# ===========================================================================
+momentum:
+  enabled: true
+
+  # Formationsfenster in HANDELSTAGEN. 252 ~ zwoelf Monate.
+  lookback_days: 252
+
+  # Juengste Handelstage, die ausgelassen werden. Nicht optional: auf sehr
+  # kurze Sicht neigen Kurse zur Umkehr, was den Effekt sonst auffrisst.
+  skip_days: 21
+
+  # Anteil des Universums je Gruppe. 0.3 = Terzile, 0.2 = Quintile.
+  group_fraction: 0.3
+
+  # Haltedauer in Handelstagen bis zur naechsten Umschichtung.
+  holding_period_days: 21
+
+  # Unterhalb dieser Anzahl bewertbarer Titel wird nicht rangiert.
+  min_universe: 8
+
+  # Aktuell nur "monthly": umgeschichtet wird beim ersten Lauf eines Monats.
+  rebalance: monthly
+
+# ---------------------------------------------------------------------------
+# Recherche-Links auf der Titel-Detailseite
+#
+# Die Begriffe steuern, wie eng die Nachrichtensuche gefasst wird. Zu viele
+# ODER-Alternativen verwaessern das Ergebnis - die ersten 14 je Gruppe werden
+# verwendet. Aenderungen wirken nach: docker compose restart
+# ---------------------------------------------------------------------------
+research:
+  # Sprache und Region der Nachrichtensuche.
+  locale:
+    hl: "de"
+    gl: "DE"
+    ceid: "DE:de"
+
+  # Zeitfenster in Tagen.
+  recent_days: 7      # "Was ist gerade los?"
+  context_days: 30    # Ereignis- und Branchensuche
+
+  # Ereignisse, die den Kurs eines einzelnen Unternehmens typischerweise bewegen.
+  company_event_terms:
+    - Quartalszahlen
+    - Gewinnwarnung
+    - Prognose
+    - Übernahme
+    - Rückruf
+    - Klage
+    - Kartellverfahren
+    - Aktienrückkauf
+    - Kapitalerhöhung
+    - Stellenabbau
+    - guidance
+    - profit warning
+    - lawsuit
+    - recall
+
+  # Ereignisse, die eine ganze Branche treffen.
+  sector_event_terms:
+    - Regulierung
+    - Zölle
+    - Exportkontrolle
+    - Sanktionen
+    - Lieferkette
+    - Rohstoffpreise
+    - Nachfrageeinbruch
+    - Subventionen
+    - tariffs
+    - supply chain
+    - export controls
+    - regulation
+
+  # Fremdmeinung zum Titel.
+  analyst_terms:
+    - Kursziel
+    - hochgestuft
+    - abgestuft
+    - Analysten
+    - price target
+    - upgrade
+    - downgrade
+
+  # Übersetzung der englischen Finnhub-Branchenbezeichnung in Suchbegriffe.
+  # Unbekannte Branchen werden unübersetzt durchgereicht.
+  industry_terms:
+    Technology: [Technologiebranche, Tech-Sektor, technology sector]
+    Semiconductors: [Halbleiterbranche, Chipindustrie, semiconductor industry]
+    Retail: [Einzelhandel, retail sector]
+    Retailing: [Einzelhandel, retail sector]
+    Banking: [Bankensektor, Finanzbranche, banking sector]
+    "Financial Services": [Finanzbranche, Finanzdienstleister, financial sector]
+    Insurance: [Versicherungsbranche, insurance sector]
+    Pharmaceuticals: [Pharmabranche, Pharmaindustrie, pharmaceutical industry]
+    Biotechnology: [Biotechnologie, biotech sector]
+    "Health Care": [Gesundheitsbranche, healthcare sector]
+    "Energy": [Energiesektor, Ölbranche, energy sector]
+    "Oil & Gas": [Ölbranche, Erdgasmarkt, oil and gas sector]
+    Automobiles: [Automobilbranche, Autoindustrie, automotive industry]
+    "Auto Manufacturers": [Automobilbranche, Autoindustrie, automotive industry]
+    Media: [Medienbranche, media sector]
+    "Communications": [Telekommunikation, telecom sector]
+    Telecommunication: [Telekommunikation, telecom sector]
+    "Consumer products": [Konsumgüter, consumer goods]
+    Logistics: [Logistikbranche, logistics sector]
+    Transportation: [Transportbranche, Logistikbranche, transportation sector]
+    Utilities: [Versorger, Energieversorger, utilities sector]
+    "Real Estate": [Immobilienbranche, real estate sector]
+    "Aerospace & Defense": [Luft- und Raumfahrt, Rüstungsindustrie, aerospace defense]
+    Chemicals: [Chemiebranche, chemical industry]
+    Machinery: [Maschinenbau, machinery sector]
+    "Food Products": [Lebensmittelbranche, food industry]
+    "Beverages": [Getränkeindustrie, beverage industry]
+    # Yahoo-Bezeichnungen - so heissen die Branchen bei Titeln ausserhalb der
+    # USA, deren Stammdaten von Yahoo kommen.
+    "Medical Instruments & Supplies": [Medizintechnik, medical technology]
+    "Medical Devices": [Medizintechnik, medical devices]
+    Railroads: [Bahnindustrie, Schienenfahrzeuge, rail industry]
+    "Specialty Industrial Machinery": [Maschinenbau, Industrieausrüstung, industrial machinery]
+    "Utilities - Diversified": [Versorger, Energieversorger, utilities sector]
+    "Utilities - Renewable": [erneuerbare Energien, renewable energy]
+    "Travel Services": [Tourismusbranche, Reisebranche, travel industry]
+    "Information Technology Services": [IT-Dienstleister, IT services]
+    "Software - Application": [Softwarebranche, software industry]
+    "Software - Infrastructure": [Softwarebranche, cloud software]
+    "Internet Content & Information": [Internetkonzerne, internet sector]
+    "Internet Retail": [Onlinehandel, e-commerce]
+    "Consumer Electronics": [Unterhaltungselektronik, consumer electronics]
+    Entertainment: [Unterhaltungsbranche, Streaming, entertainment industry]
+    "Electrical Equipment & Parts": [Elektrotechnik, electrical equipment]
+
+# ---------------------------------------------------------------------------
+# KI-Nachrichtenlage auf dem Steckbrief
+#
+# Sucht aktuelle Meldungen ueber Firecrawl und laesst sie von einem Mistral-
+# Modell zusammenfassen - mit Quellenangabe je Aussage, ohne Kaufempfehlung.
+# Fliesst in kein Signal ein.
+#
+# Die Keys gehoeren in die .env, NICHT hierher:
+#   FIRECRAWL_API_KEY=fc-...
+#   MISTRAL_API_KEY=...
+#   MISTRAL_MODEL=mistral-small-latest   (optional, ueberschreibt 'model')
+# Danach 'make up' (nicht 'make restart'). Ohne beide Keys ist die Funktion aus.
+# ---------------------------------------------------------------------------
+ai:
+  enabled: true
+  model: mistral-small-latest
+  # Zeitfenster der Suche: qdr:d (Tag), qdr:w (Woche), qdr:m (Monat)
+  lookback: "qdr:w"
+  location: Germany
+  # Hoechstens so viele Artikel je Einschaetzung.
+  max_articles: 8
+  # Artikeltext mitlesen statt nur Schlagzeile und Auszug. Genauer, kostet
+  # aber Firecrawl-Credits je Artikel.
+  scrape: true
+  article_chars: 2500
+  # Automatisch im Nachtlauf fuer Titel, deren Zahlen in so vielen Tagen anstehen.
+  auto_before_earnings_days: 3
+  # So lange gilt eine Einschaetzung als aktuell (Stunden).
+  cache_hours: 24
+  # Suchvorlagen, {name} = Firmenname ohne Rechtsform.
+  queries:
+    - '"{name}" Aktie'
+    - '"{name}" stock'
+
+# Wie alt dürfen Analystenempfehlungen und der nächste Earnings-Termin werden,
+# bevor sie neu abgerufen werden (Tage).
+outlook_max_age_days: 3

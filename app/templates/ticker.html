@@ -1,0 +1,590 @@
+{% extends "base.html" %}
+{% set active = 'tickers' %}
+{% block title %}{{ d.symbol }} · PEAD-Signal-POC{% endblock %}
+{% block head %}{% if news and news.pending %}<meta http-equiv="refresh" content="6">{% endif %}{% endblock %}
+
+{% from "_retro.html" import retro_line, retro_tag %}
+{% from "_wind.html" import wind_icon, wind_word %}
+{% block content %}
+
+<nav class="ticker-nav" aria-label="Titel wechseln">
+  <a href="/titel" class="ticker-nav-back">‹ Alle Titel</a>
+  <div class="ticker-nav-pager">
+    {% if d.position %}<span class="muted">{{ d.position }} von {{ d.total }}</span>
+    {% else %}<span class="muted">nicht in der Liste</span>{% endif %}
+    {% if d.prev_symbol %}<a href="/titel/{{ d.prev_symbol }}" data-prev accesskey="p"
+       title="Vorheriger Titel (Taste k oder ←)">‹ {{ d.prev_symbol }}</a>{% endif %}
+    {% if d.next_symbol %}<a href="/titel/{{ d.next_symbol }}" data-next accesskey="n"
+       title="Nächster Titel (Taste j oder →)">{{ d.next_symbol }} ›</a>{% endif %}
+  </div>
+</nav>
+
+{% if not d.active %}
+<div class="flash warn inactive-banner" role="status">
+  <span><strong>{{ d.symbol }} wird nicht mehr beobachtet.</strong> Die Historie bleibt
+  lesbar; offene Positionen laufen bis zum Ausstieg weiter, neue Signale entstehen nicht.</span>
+  <form method="post" action="/titel/{{ d.symbol }}/aufnehmen" class="inline">
+    <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token() }}">
+    <input type="hidden" name="zurueck" value="steckbrief">
+    <button type="submit" class="secondary">Wieder aufnehmen</button>
+  </form>
+</div>
+{% endif %}
+
+<header class="card ticker-head">
+  <div>
+    <h1 class="ticker-symbol">{{ d.symbol }}</h1>
+    <p class="ticker-name">
+      {{ d.company or 'Firmenname unbekannt' }}
+      {%- if d.industry %} · {{ d.industry }}{% endif %}
+    </p>
+    <details class="name-edit"{% if not d.company %} open{% endif %}>
+      <summary>{{ 'Name eintragen' if not d.company else 'Name korrigieren' }}</summary>
+      <form method="post" action="/titel/{{ d.symbol }}/name" class="name-form">
+        <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token() }}">
+        <input type="text" name="name" value="{{ d.company or '' }}" maxlength="128"
+               placeholder="z. B. Carl Zeiss Meditec AG" aria-label="Firmenname">
+        <button type="submit" class="secondary">Speichern</button>
+      </form>
+      <p class="runinfo">Der Name steuert die Recherche-Links. Ein eingetragener Name
+      wird von keinem Abruf überschrieben{% if d.name_manual %}; leer speichern gibt ihn
+      wieder für den automatischen Abruf frei{% endif %}.</p>
+    </details>
+  </div>
+  <div class="ticker-price">
+    <span class="ticker-close">{{ d.context.last_close|num }}</span>
+    <span class="runinfo">Schlusskurs {{ d.context.last_date|datefmt }}</span>
+    {% if d.active %}
+    <form method="post" action="/titel/{{ d.symbol }}/entfernen" class="inline ticker-remove">
+      <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token() }}">
+      <button type="submit" class="link-btn"
+              title="Beendet die Beobachtung. Historie und offene Positionen bleiben; rückgängig machbar.">
+        Nicht mehr beobachten</button>
+    </form>
+    {% endif %}
+  </div>
+</header>
+
+{# Das Einzige, worüber diese Anwendung ein Urteil fällt. #}
+{% if d.outlook or d.analysts or momentum_card %}
+<section class="card" id="lage">
+  <h2>Lage heute</h2>
+  <div class="lage-grid">
+    {% if d.outlook %}
+    <div class="lage-tile main">
+      {{ wind_icon(d.outlook.wind, 30) }}
+      <div>
+        <p class="lage-k">Kennzahlen gesamt</p>
+        <p class="lage-v">{{ d.outlook.label }}</p>
+        <p class="lage-s">{{ d.outlook.tailwind }}× Rückenwind · {{ d.outlook.headwind }}× Gegenwind
+          · {{ d.outlook.calm }}× Flaute – <a href="#lesehilfe">warum?</a></p>
+      </div>
+    </div>
+    {% endif %}
+    <div class="lage-tile">
+      {{ wind_icon(d.pead_wind) }}
+      <div>
+        <p class="lage-k">PEAD</p>
+        {% if d.pead.state == 'ACTIVE' and d.pead.signal %}
+          <p class="lage-v">{{ d.pead.signal.signal_type }}-Signal läuft{% if d.pead.signal.retro %} <span class="muted">(rückwirkend)</span>{% endif %}</p>
+          <p class="lage-s">{% if d.pead.signal.days_remaining is not none %}noch {{ d.pead.signal.days_remaining }} Handelstage{% endif %}</p>
+        {% else %}
+          <p class="lage-v">keine Aussage</p>
+          <p class="lage-s">nur nach Quartalszahlen{% if d.next_earnings_date %} · nächste {{ d.next_earnings_date|datefmt }}{% endif %}</p>
+        {% endif %}
+      </div>
+    </div>
+    {% if momentum_card and momentum_card.rank %}
+    {% set mw = {'top': 'rueckenwind', 'bottom': 'gegenwind', 'middle': 'flaute'}[momentum_card.zone] %}
+    <div class="lage-tile">
+      {{ wind_icon(mw) }}
+      <div>
+        <p class="lage-k">Momentum</p>
+        <p class="lage-v">Rang {{ momentum_card.rank }} von {{ momentum_card.universe }}</p>
+        <p class="lage-s">{{ {'top': 'Spitzengruppe', 'bottom': 'Schlussgruppe', 'middle': 'Mittelfeld'}[momentum_card.zone] }} unter deinen Titeln</p>
+      </div>
+    </div>
+    {% endif %}
+    <div class="lage-tile">
+      {{ wind_icon(d.analysts.wind if d.analysts else none) }}
+      <div>
+        <p class="lage-k">Analysten <span class="muted">· Fremdmeinung</span></p>
+        {% if d.analysts and d.analysts.total %}
+          <p class="lage-v">{{ d.analysts.majority }}</p>
+          <p class="lage-s">{{ d.analysts.strong_buy + d.analysts.buy }} Kaufen · {{ d.analysts.hold }} Halten ·
+            {{ d.analysts.sell + d.analysts.strong_sell }} Verkaufen</p>
+        {% else %}
+          <p class="lage-v">keine Daten</p>
+          <p class="lage-s">Finnhub liefert sie nur für US-Titel</p>
+        {% endif %}
+      </div>
+    </div>
+    {% if news and news.status == 'ok' %}
+    <div class="lage-tile">
+      {{ wind_icon(news.wind) }}
+      <div>
+        <p class="lage-k">Nachrichten <span class="muted">· KI</span></p>
+        <p class="lage-v">{{ {'positiv': 'überwiegend positiv', 'negativ': 'überwiegend negativ', 'gemischt': 'gemischt', 'neutral': 'neutral'}[news.overall] }}</p>
+        <p class="lage-s"><a href="#nachrichten">Stand {{ news.created_at|dtfmt }}</a></p>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+  <p class="runinfo lage-note">Rückenwind heißt: Diese Kennzahl spricht eher für steigende
+    Kurse, Gegenwind für fallende. Das beschreibt die Lage – <strong>es ist keine
+    Empfehlung</strong>. Wie viel eine Kennzahl taugt, steht in der Lesehilfe.
+    {%- set mr = momentum_retro %}
+    {%- if mr and mr.closed_count %} Zum Vergleich: Rückwirkend lagen
+    {{ mr.win_count }} von {{ mr.closed_count }} Momentum-Positionen deiner Titel im Plus
+    (95 %: {{ mr.win_rate_low|ratebare }}–{{ mr.win_rate_high|rate }}){% if mr.win_rate_low <= 0.5 <= mr.win_rate_high %}
+    – nicht von einem Münzwurf zu unterscheiden{% endif %}.{% endif %}</p>
+</section>
+{% endif %}
+
+{% include "_chart.html" %}
+
+{% if d.phases %}
+{% set live = d.phase_summary(False) %}
+{% set rueck = d.phase_summary(True) %}
+<section class="card" id="signalphasen">
+  <h2>Signale im Rückblick</h2>
+  <div class="phase-sum">
+    <span><strong>Live:</strong>
+      {% if live.count or live.open %}{{ live.count }} abgeschlossen, davon {{ live.wins }} im Plus
+        {%- if live.beat_base %}, {{ live.beat_count }} besser als der Vergleich{% endif %}
+        {%- if live.open %} · {{ live.open }} laufend{% endif %}
+      {% else %}noch keine{% endif %}</span>
+    <span><strong>Rückwirkend:</strong>
+      {% if rueck.count or rueck.open %}{{ rueck.count }} abgeschlossen, davon {{ rueck.wins }} im Plus
+        {%- if rueck.beat_base %}, {{ rueck.beat_count }} besser als der Vergleich{% endif %}
+        {%- if rueck.open %} · {{ rueck.open }} laufend{% endif %}
+      {% else %}keine{% endif %}</span>
+  </div>
+  <p class="runinfo" style="margin:0 0 12px">
+    Jede Zeile ist eine Phase im Diagramm oben. <strong>Rückwirkend</strong> heißt: später
+    aus heutigen Daten berechnet, nicht damals erzeugt. Diese Zeilen sehen besser aus, als
+    sie gewesen wären – Zahlen werden nachträglich korrigiert, und die Titelauswahl kennt
+    die Vergangenheit. Achte deshalb auf die Fehlschläge genauso wie auf die Treffer, und
+    auf die Spalte <em>Vergleich</em>: Eine Phase ist nur dann etwas wert, wenn sie besser
+    lief als die übrigen Titel im selben Zeitraum.
+    {% if d.momentum_retro_from %}Momentum rückwirkend ab
+      {{ d.momentum_retro_from|datefmt }}; davor reicht die Kurshistorie nicht für zwölf
+      Monate Vorlauf.{% endif %}
+  </p>
+  <div class="scroll">
+    <table data-sortable>
+      <thead><tr>
+        <th><span>Strategie</span></th>
+        <th><span>Richtung</span></th>
+        <th title="Live erzeugt oder rückwirkend berechnet"><span>Herkunft</span></th>
+        <th><span>Einstieg</span></th>
+        <th><span>Ausstieg</span></th>
+        <th class="num" title="Ergebnis der Position, brutto. Bei laufenden Positionen der Stand bisher."><span>Ergebnis</span></th>
+        <th class="num" title="Was die übrigen beobachteten Titel im selben Zeitraum im Mittel machten"><span>Vergleich</span></th>
+        <th title="Warum die Regel das Signal gab"><span>Grund</span></th>
+      </tr></thead>
+      <tbody>
+        {% for p in d.phases %}
+        <tr>
+          <td>{{ 'PEAD' if p.lane == 'pead' else 'Momentum' }}</td>
+          <td><span class="side-key {{ p.side }}{{ ' retro' if p.retro }}"></span>{{ p.label }}</td>
+          <td>{% if p.retro %}{{ retro_tag() }}{% else %}live{% endif %}</td>
+          <td data-sort="{{ p.entry }}">{{ p.entry|datefmt }}</td>
+          <td data-sort="{{ p.exit or '9999' }}">{% if p.exit %}{{ p.exit|datefmt }}{% else %}<span class="muted">läuft</span>{% endif %}</td>
+          <td class="num {{ 'pos' if (p.result or 0) > 0 else ('neg' if p.result else '') }}"
+              data-sort="{{ p.result or 0 }}">{{ p.result|pct(1) }}{% if not p.exit and p.result is not none %} <span class="muted">bisher</span>{% endif %}</td>
+          <td class="num muted" data-sort="{{ p.benchmark or 0 }}">{{ p.benchmark|pct(1) }}</td>
+          <td class="muted">{{ p.note }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+<section class="card pead-status pead-{{ d.pead.state|lower }}">
+  <p class="label">PEAD-Status</p>
+  <h2>{{ d.pead.headline }}</h2>
+  <p>{{ d.pead.detail }}</p>
+  {% if d.pead.state != 'ACTIVE' %}
+    <p class="runinfo" style="margin-top:10px">
+      Die PEAD-Logik trifft nur in den {{ settings.holding_period_days }} Handelstagen
+      nach einer Gewinnüberraschung eine Aussage. Außerhalb dieses Fensters ist
+      „keine Aussage“ das korrekte Ergebnis, kein Fehler.
+    </p>
+  {% endif %}
+</section>
+
+{% set own_score = (momentum_scores | selectattr('symbol', 'equalto', d.symbol) | list | first) %}
+{% set momentum_open = momentum | selectattr('status', 'equalto', 'OPEN') | list %}
+<section class="card momentum-status" id="momentum-karte">
+  <p class="label">Momentum <span class="muted">· zweite Quelle, unabhängig von PEAD</span></p>
+  {% set mc = momentum_card %}
+  {% if mc and mc.rank %}
+    {% set mw = {'top': 'rueckenwind', 'bottom': 'gegenwind', 'middle': 'flaute'}[mc.zone] %}
+    <div class="mcard">
+      <div>
+        <div class="mcard-head">
+          {{ wind_icon(mw, 28) }}
+          <h2>{% if momentum_open %}{{ momentum_open[0].direction }} im aktuellen Korb
+            {% elif mc.zone == 'middle' %}Mittelfeld – nicht im Korb
+            {% else %}{{ 'Spitzengruppe' if mc.zone == 'top' else 'Schlussgruppe' }}{% endif %}</h2>
+        </div>
+        <p>Rang <strong>{{ mc.rank }}</strong> von {{ mc.universe }} deiner Titel,
+          gemessen an zwölf Monaten ohne den letzten ({{ mc.score|pct(1) }}).
+          {% if momentum_open and momentum_open[0].days_remaining is not none %}Noch
+          {{ momentum_open[0].days_remaining }} Handelstage bis zur nächsten Umschichtung.{% endif %}</p>
+        <div class="ladder" role="img"
+             aria-label="Rangleiter: Rang {{ mc.rank }} von {{ mc.universe }}; die besten {{ mc.group }} sind long, die schwächsten {{ mc.group }} short">
+          {% for c in mc.ladder %}<span class="cell {{ c.zone }}{{ ' own' if c.own }}" title="Rang {{ c.rank }}: {{ c.symbol }}"></span>{% endfor %}
+        </div>
+        <div class="ladder-scale">
+          <span>Rang 1 · long</span>
+          <span class="mid">{{ d.symbol }}</span>
+          <span>short · Rang {{ mc.universe }}</span>
+        </div>
+      </div>
+      {% if mc.history|length >= 2 %}
+      <div>
+        <p class="lage-k" style="margin:0 0 4px">Rangverlauf, zwölf Monate</p>
+        <svg class="rankline" viewBox="0 0 {{ mc.width }} {{ mc.height + 14 }}" role="img"
+             aria-label="Rang {{ mc.start.rank }} am {{ mc.start.day|datefmt }}, heute Rang {{ mc.rank }}">
+          <rect class="band top" x="{{ mc.pad }}" y="{{ mc.pad }}" width="{{ mc.width - 2 * mc.pad }}"
+                height="{{ mc.band_top - mc.pad }}"></rect>
+          <rect class="band bottom" x="{{ mc.pad }}" y="{{ mc.band_bottom }}" width="{{ mc.width - 2 * mc.pad }}"
+                height="{{ mc.height - mc.pad - mc.band_bottom }}"></rect>
+          <polyline class="rl" points="{{ mc.line }}"></polyline>
+          {% set last = mc.history[-1] %}
+          <circle class="rl-dot" cx="{{ last.x }}" cy="{{ last.y }}" r="4"></circle>
+          <text class="rl-label" x="{{ mc.pad }}" y="{{ mc.height + 12 }}">{{ mc.start.day|datefmt }}: Rang {{ mc.start.rank }}</text>
+          <text class="rl-label" x="{{ mc.width - mc.pad }}" y="{{ mc.height + 12 }}" text-anchor="end">heute: Rang {{ last.rank }}</text>
+        </svg>
+        <p class="runinfo" style="margin:4px 0 0">Oben die Spitzengruppe (blau), unten die
+          Schlussgruppe (orange). Je Monatsanfang aus den Kursen berechnet.</p>
+      </div>
+      {% endif %}
+    </div>
+  {% elif own_score %}
+    <h2>Noch nicht bewertbar</h2>
+    <p>Für das Formationsfenster fehlt Kurshistorie ({{ own_score.bars }} Kurstage
+      vorhanden, nötig gut ein Jahr). Der nächste Lauf lädt sie nach.</p>
+  {% else %}
+    <h2>Momentum ist abgeschaltet</h2>
+  {% endif %}
+  <p class="runinfo" style="margin-top:10px">
+    Momentum ist eine <strong>relative</strong> Aussage: der Titel steht besser oder
+    schlechter da als die anderen im Universum — nicht gut oder schlecht für sich.
+    <a href="/momentum">Ganze Rangfolge ansehen</a>
+  </p>
+  {% if momentum_open and momentum_explanations.get(momentum_open[0].id) %}
+    {% set e = momentum_explanations[momentum_open[0].id] %}
+    {% set explain_open = false %}
+    {% include "_explain.html" %}
+  {% endif %}
+</section>
+
+<section class="card" id="lesehilfe">
+  <h2>Den Kurs selbst lesen</h2>
+  <p class="runinfo" style="margin:-4px 0 14px">
+    Jede Karte sagt mit einem Symbol, wofür die Kennzahl gerade spricht:
+    {{ wind_icon('rueckenwind', 16) }} Rückenwind, {{ wind_icon('gegenwind', 16) }} Gegenwind,
+    {{ wind_icon('flaute', 16) }} Flaute – bei Risiko und Umsatz {{ wind_icon(none, 16) }}
+    gar keine Richtung, weil sie nur beschreiben.
+    Sieben Fragen, die du an jeden Kursverlauf stellen kannst – mit dem heutigen Wert,
+    wie er für diesen Titel zu lesen ist, und <strong>wie gut die Forschung stützt</strong>,
+    dass er etwas über die Zukunft sagt. Belastbares steht vorn. Keine dieser Kennzahlen
+    ist für sich eine Kaufempfehlung.
+  </p>
+  <div class="readings">
+    {% for r in d.readings %}
+    <article class="reading">
+      <div class="reading-head">
+        <span class="reading-wind">{{ wind_icon(r.wind, 20) }}{{ wind_word(r.wind) }}</span>
+        <p class="reading-q">{{ r.question }}</p>
+      </div>
+      <p class="reading-value">{{ r.value }}</p>
+      <p class="reading-text">{{ r.reading }}</p>
+      <div class="evidence" title="{{ r.evidence.sources }}">
+        <span class="evidence-dots" aria-hidden="true">
+          {%- for i in range(4) %}<span class="dot{{ ' on' if i < r.evidence.level }}"></span>{% endfor -%}
+        </span>
+        <span class="evidence-label">Beleglage: {{ r.evidence.label }}</span>
+      </div>
+      <details class="evidence-more">
+        <summary>Warum?</summary>
+        <p>{{ r.evidence.text }}</p>
+        {% if r.evidence.sources %}<p class="muted">Quellen: {{ r.evidence.sources }}</p>{% endif %}
+      </details>
+      {% if r.layer %}
+        <button type="button" class="link-btn show-layer" data-show-layer="{{ r.layer }}">im Chart zeigen</button>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+
+  <details class="howto">
+    <summary>So gehst du einen Titel durch</summary>
+    <ol>
+      <li><strong>Gibt es gerade ein Signal?</strong> Der PEAD-Status oben sagt es. Wenn
+        nicht, hat die Regel zu diesem Titel schlicht nichts zu sagen.</li>
+      <li><strong>Relative Stärke und Trend:</strong> Zeigen der Rang unter deinen Titeln
+        und die 200-Tage-Linie in dieselbe Richtung, ist das Bild eindeutig. Widersprechen
+        sie sich, steckt meist ein Markt- oder Branchenumfeld dahinter.</li>
+      <li><strong>Termin:</strong> Stehen bald Quartalszahlen an, ist bis dahin mit einem
+        Kurssprung in beide Richtungen zu rechnen.</li>
+      <li><strong>Risiko:</strong> Die Schwankung bestimmt, wie groß eine Position sein
+        darf – nicht, in welche Richtung sie laufen wird.</li>
+      <li><strong>Nachrichten:</strong> Die Recherche-Links unten zeigen, ob eine
+        auffällige Bewegung einen Grund hat.</li>
+      <li><strong>Rückblick:</strong> Die Tabelle „Signale im Rückblick“ zeigt, wie oft die
+        Regeln bei diesem Titel danebenlagen. Ein Titel, bei dem sie oft danebenlagen,
+        verdient weniger Vertrauen in das nächste Signal.</li>
+    </ol>
+  </details>
+
+  <p class="reading-q" style="margin:18px 0 8px">Kursveränderung</p>
+  <dl class="stats">
+    {% for label, value, hint in [
+      ('1 Woche', d.context.return_1w, '5 Handelstage'),
+      ('1 Monat', d.context.return_1m, '21 Handelstage'),
+      ('3 Monate', d.context.return_3m, '63 Handelstage'),
+      ('12 Monate', d.context.return_12m, '252 Handelstage')] %}
+      <div class="stat">
+        <dt>{{ label }}</dt>
+        <dd class="{{ 'pos' if (value or 0) > 0 else ('neg' if value else '') }}">
+          {{ value|pct(1) }}<small>{{ hint }}</small></dd>
+      </div>
+    {% endfor %}
+  </dl>
+</section>
+
+<section class="card" id="nachrichten">
+  <h2>Nachrichtenlage <span class="muted">· KI-Zusammenfassung</span></h2>
+  {% if not news_available %}
+    <p class="runinfo" style="margin:0">Aus. Zum Einschalten in der <code>.env</code> auf dem
+      Server <code>FIRECRAWL_API_KEY</code> und <code>MISTRAL_API_KEY</code> eintragen,
+      dann <code>make up</code>. Die Keys gehören nicht in die config.yaml und nicht in
+      einen Chat.</p>
+  {% else %}
+    {% if news and news.pending %}
+      <p class="flash ok" role="status">Suche und Zusammenfassung laufen – das dauert meist
+        unter einer Minute. Die Seite lädt sich selbst neu.</p>
+    {% elif news and news.status == 'error' %}
+      <p class="flash warn">Die letzte Einschätzung ist gescheitert: {{ news.error }}</p>
+    {% endif %}
+
+    {% if news and news.status == 'ok' %}
+      <div class="news-head">
+        {{ wind_icon(news.wind, 28) }}
+        <p class="news-overall">Nachrichtenlage:
+          <strong>{{ {'positiv': 'überwiegend positiv', 'negativ': 'überwiegend negativ', 'gemischt': 'gemischt', 'neutral': 'neutral'}[news.overall] }}</strong></p>
+      </div>
+      <p class="news-summary">
+        {%- for kind, value in news.summary_parts -%}
+          {%- if kind == 'text' %}{{ value }}{% else -%}
+            <a class="cite" href="{{ value.url }}" target="_blank" rel="noopener noreferrer nofollow"
+               title="{{ value.title }} – {{ value.source }}">[{{ value.n }}]</a>
+          {%- endif -%}
+        {%- endfor -%}
+      </p>
+      {% for w in news.warnings %}<p class="runinfo news-warn">⚠ {{ w }}</p>{% endfor %}
+
+      {% if news.events %}
+      <p class="lage-k" style="margin:14px 0 6px">Wichtige Ereignisse</p>
+      <ul class="news-events">
+        {% for ev in news.events %}
+        <li>{{ ev.text }}
+          {% for src in ev.sources %}<a class="cite" href="{{ src.url }}" target="_blank"
+             rel="noopener noreferrer nofollow" title="{{ src.title }}">[{{ src.n }}]</a>{% endfor %}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+
+      <details class="news-sources"{% if news.articles|length <= 4 %} open{% endif %}>
+        <summary>Quellen ({{ news.articles|length }})</summary>
+        <ol class="news-list">
+          {% for a in news.articles %}
+          <li class="{{ '' if a.relevant else 'irrelevant' }}">
+            <span class="news-n">{{ a.id }}</span>
+            <div>
+              <a href="{{ a.url }}" target="_blank" rel="noopener noreferrer nofollow">{{ a.title }}</a>
+              <span class="muted"> · {{ a.source }}{% if a.date %} · {{ a.date }}{% endif %}</span>
+              {% if a.note %}<p class="news-note">
+                {% if a.sentiment %}<span class="sent {{ a.sentiment }}">{{ a.sentiment }}</span>{% endif %}
+                {{ a.note }}</p>{% endif %}
+              {% if not a.relevant %}<p class="news-note muted">vom Modell als nicht zum Unternehmen gehörig aussortiert</p>{% endif %}
+            </div>
+          </li>
+          {% endfor %}
+        </ol>
+      </details>
+
+      <p class="runinfo" style="margin:12px 0 0">
+        Zusammengefasst von <code>{{ news.model }}</code> am {{ news.created_at|dtfmt }}
+        ({{ 'automatisch vor den Quartalszahlen' if news.trigger == 'auto' else 'auf Knopfdruck' }}).
+        Sprachmodelle klingen sicher, auch wenn sie sich irren – <strong>die Quellen sind
+        maßgeblich</strong>. Beschreibt die Berichterstattung, empfiehlt nichts und fließt in
+        kein Signal ein.
+      </p>
+    {% elif not news or news.status != 'pending' %}
+      <p class="runinfo" style="margin:0 0 10px">Sucht Meldungen der letzten Tage zu
+        {{ d.company or d.symbol }} und lässt sie zusammenfassen – jede Aussage mit Quelle.</p>
+    {% endif %}
+
+    {% if not news or not news.pending %}
+    <form method="post" action="/titel/{{ d.symbol }}/nachrichten" style="margin-top:12px">
+      <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token() }}">
+      <button type="submit" class="{{ 'secondary' if news and news.fresh else '' }}">
+        {{ 'Neu einschätzen' if news and news.status == 'ok' else 'Nachrichtenlage einschätzen' }}</button>
+      {% if news and news.fresh and news.status == 'ok' %}<span class="runinfo">&nbsp;Die
+        Einschätzung ist noch aktuell – ein neuer Abruf kostet Kontingent.</span>{% endif %}
+    </form>
+    {% endif %}
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Nächste Quartalszahlen</h2>
+  {% if d.next_earnings_date %}
+    <p>
+      <strong>{{ d.next_earnings_date|datefmt }}</strong>
+      {% if d.days_to_earnings is not none %}
+        {% if d.days_to_earnings > 0 %}— in {{ d.days_to_earnings }} Tagen
+        {% elif d.days_to_earnings == 0 %}— heute
+        {% else %}— erwartet, Meldung steht noch aus{% endif %}
+      {% endif %}
+    </p>
+    <p class="runinfo">Vorher ist kein neues PEAD-Signal zu erwarten. Termine laut
+      Finnhub-Kalender und bis zur Bestätigung durch das Unternehmen vorläufig.</p>
+  {% else %}
+    <p class="muted">Kein Termin bekannt. Finnhub liefert den Kalender nicht für jeden
+      Titel und jeden Tarif; <code>make check</code> zeigt, ob der Endpunkt verfügbar ist.</p>
+  {% endif %}
+</section>
+
+{% if d.analysts and d.analysts.total %}
+<section class="card">
+  <h2>Analystenbild</h2>
+  <p class="runinfo" style="margin:-4px 0 12px">
+    Fremddaten von Finnhub, Stand {{ d.analysts.period|datefmt }}.
+    <strong>Nicht Teil der PEAD-Logik</strong> – rein informativ.
+  </p>
+  <div class="reco-bar" role="img"
+       aria-label="{{ d.analysts.total }} Analysten: {{ d.analysts.strong_buy + d.analysts.buy }} Kaufen, {{ d.analysts.hold }} Halten, {{ d.analysts.sell + d.analysts.strong_sell }} Verkaufen">
+    {% set t = d.analysts.total %}
+    {% if d.analysts.strong_buy + d.analysts.buy %}
+      <span class="seg seg-buy" style="width: {{ ((d.analysts.strong_buy + d.analysts.buy) / t * 100)|round(1) }}%"></span>
+    {% endif %}
+    {% if d.analysts.hold %}
+      <span class="seg seg-hold" style="width: {{ (d.analysts.hold / t * 100)|round(1) }}%"></span>
+    {% endif %}
+    {% if d.analysts.sell + d.analysts.strong_sell %}
+      <span class="seg seg-sell" style="width: {{ ((d.analysts.sell + d.analysts.strong_sell) / t * 100)|round(1) }}%"></span>
+    {% endif %}
+  </div>
+  <ul class="chart-legend">
+    <li><span class="key seg-buy"></span>Kaufen {{ d.analysts.strong_buy + d.analysts.buy }}</li>
+    <li><span class="key seg-hold"></span>Halten {{ d.analysts.hold }}</li>
+    <li><span class="key seg-sell"></span>Verkaufen {{ d.analysts.sell + d.analysts.strong_sell }}</li>
+    <li class="muted">von {{ d.analysts.total }} Analysten</li>
+  </ul>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Recherche</h2>
+  <p class="runinfo" style="margin:-4px 0 14px">
+    Vorgefertigte Suchen, eingegrenzt auf kursrelevante Treffer. Die Begriffe stehen
+    in <code>config.yaml</code> unter <code>research:</code> und lassen sich anpassen.
+  </p>
+  {% for group in ['Unternehmen', 'Branche', 'Primärquellen'] %}
+    {% set items = d.research | selectattr('group', 'equalto', group) | list %}
+    {% if items %}
+      <h3 class="research-group">{{ group }}</h3>
+      <ul class="research-list">
+        {% for link in items %}
+          <li>
+            <a href="{{ link.url }}" target="_blank" rel="noopener noreferrer">{{ link.label }}</a>
+            <span>{{ link.description }}</span>
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  {% endfor %}
+</section>
+
+<section>
+  <h2>Signale dieses Titels</h2>
+  <div class="scroll">
+    {% set rows = d.open_signals + d.closed_signals %}
+    {% if rows %}
+    <table>
+      <thead>
+        <tr>
+          <th><span>Signal</span></th><th><span>Trigger</span></th><th><span>Einstieg</span></th>
+          <th class="num"><span>Einstiegskurs</span></th><th><span>Ausstieg</span></th>
+          <th class="num"><span>SUE</span></th><th class="num"><span>Surprise</span></th>
+          <th class="num"><span>Ergebnis</span></th>
+          <th class="num" title="Was die übrigen Titel im selben Zeitraum machten"><span>Vergleich</span></th>
+          <th><span>Warum?</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in rows %}
+        <tr>
+          <td><span class="tag {{ 'buy' if s.signal_type == 'BUY' else 'sell' }}">{{ s.signal_type }}</span>{% if s.retro %} {{ retro_tag() }}{% endif %}</td>
+          <td>{{ s.trigger_date }}</td>
+          <td>{{ s.entry_date or '–' }}</td>
+          <td class="num">{{ s.entry_price|num }}</td>
+          <td>{{ s.exit_date or 'offen' }}</td>
+          <td class="num">{{ s.sue|sue }}</td>
+          <td class="num">{{ s.surprise_pct|pct(1) }}</td>
+          <td class="num {{ 'pos' if (s.return_pct or s.unrealized_pct or 0) > 0 else ('neg' if (s.return_pct or s.unrealized_pct) else '') }}">
+            {% if s.return_pct is not none %}{{ s.return_pct|pct }}
+            {% elif s.unrealized_pct is not none %}{{ s.unrealized_pct|pct }} <span class="muted">offen</span>
+            {% else %}–{% endif %}
+          </td>
+          <td class="num muted">{{ s.benchmark_return_pct|pct }}</td>
+          <td class="why">{% set e = explanations.get(s.id) %}{% if e %}<button type="button" class="why-btn" data-explain aria-expanded="false">Warum?</button>{% endif %}</td>
+        </tr>
+        {% if e %}{% include "_explain_row.html" %}{% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <p class="empty">Für diesen Titel wurde noch kein Signal erzeugt.</p>
+    {% endif %}
+  </div>
+</section>
+
+<section>
+  <h2>Quartalsmeldungen</h2>
+  <div class="scroll">
+    {% if d.events %}
+    <table>
+      <thead>
+        <tr><th><span>Meldedatum</span></th><th><span>Zeitpunkt</span></th>
+          <th class="num"><span>EPS erwartet</span></th><th class="num"><span>EPS tatsächlich</span></th>
+          <th class="num"><span>Surprise</span></th><th class="num"><span>SUE</span></th></tr>
+      </thead>
+      <tbody>
+        {% for e in d.events %}
+        <tr>
+          <td>{{ e.report_date }}</td>
+          <td class="muted">{{ {'bmo':'vor Handel','amc':'nach Schluss','dmh':'im Handel'}.get(e.report_hour, 'unbekannt') }}</td>
+          <td class="num">{{ e.eps_estimate|num }}</td>
+          <td class="num">{{ e.eps_actual|num }}</td>
+          <td class="num {{ 'pos' if (e.surprise_pct or 0) > 0 else ('neg' if e.surprise_pct else '') }}">{{ e.surprise_pct|pct(1) }}</td>
+          <td class="num">{{ e.sue|sue }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p class="empty">Noch keine Meldung erfasst.</p>{% endif %}
+  </div>
+</section>
+
+{% include "_legend.html" %}
+
+{% endblock %}

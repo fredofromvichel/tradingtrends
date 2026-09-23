@@ -1,0 +1,20 @@
+{# Rueckwirkend berechnete Signale: sichtbar, aber nie mit den live erzeugten
+   vermischt. Sie rechnen mit heutigen, nachtraeglich korrigierten Daten und
+   mit einer Titelauswahl, die die Vergangenheit kennt - sie sehen besser aus,
+   als sie damals gewesen waeren. #}
+
+{% macro retro_tag() -%}
+<span class="tag retro" title="Rückwirkend berechnet – dieses Signal ist nicht zum Zeitpunkt der Meldung entstanden, sondern später aus heutigen Daten. Es zählt nicht in die Live-Statistik.">rückwirkend</span>
+{%- endmacro %}
+
+{% macro retro_line(r, what='Positionen') -%}
+{% if r and r.closed_count %}
+<p class="retro-line">
+  {{ retro_tag() }}
+  {{ r.closed_count }} {{ what }}, {{ r.win_count }} im Plus
+  <span class="muted">(95 %: {{ r.win_rate_low|ratebare }}–{{ r.win_rate_high|rate }})</span>
+  {%- if r.avg_return_pct is not none %} · Ø {{ r.avg_return_pct|pct(1) }}{% endif %}
+  {%- if r.beat_base %} · {{ r.beat_count }} von {{ r.beat_base }} besser als der Vergleich{% endif %}
+</p>
+{% endif %}
+{%- endmacro %}

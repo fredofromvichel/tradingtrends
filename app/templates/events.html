@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% set active = 'events' %}
+{% block title %}Earnings-Events · PEAD-Signal-POC{% endblock %}
+
+{% block content %}
+<section class="card">
+  <h2>Erfasste Earnings-Events</h2>
+  <p class="runinfo" style="margin:0">
+    Rohdaten nach der Normalisierung, unabhängig von der Quelle. Die Spalte „Quelle“ zeigt,
+    woher ein Event stammt: Finnhub, oder Yahoo als Ausweichquelle dort, wo Finnhubs Tarif
+    nicht greift. „Verarbeitet“ heißt: die Signal-Entscheidung wurde getroffen – auch wenn
+    sie „kein Signal“ lautete, weil die Überraschung innerhalb der Schwellen lag.
+  </p>
+</section>
+
+<section>
+  <div class="scroll">
+    {% if events %}
+    <table data-sortable>
+      <thead>
+        <tr>
+          <th><span>Symbol</span></th>
+          <th title="Tag, an dem das Unternehmen die Zahlen gemeldet hat"><span>Meldedatum</span></th>
+          <th title="Vor Handelsbeginn, nach Börsenschluss oder während des Handels – bestimmt, ab wann der Kurs handelbar war"><span>Zeitpunkt</span></th>
+          <th title="Fiskalperiode, auf die sich die Zahlen beziehen"><span>Periode</span></th>
+          <th class="num" title="Gewinn je Aktie, den Analysten im Mittel erwartet hatten"><span>EPS erwartet</span></th>
+          <th class="num" title="Tatsächlich berichteter Gewinn je Aktie"><span>EPS tatsächlich</span></th>
+          <th class="num" title="Abweichung zwischen erwartet und tatsächlich, in Prozent"><span>Surprise</span></th>
+          <th class="num" title="Surprise geteilt durch die übliche Schwankung dieses Unternehmens. „–“ = weniger als vier Vorquartale bekannt."><span>SUE</span></th>
+          <th title="Woher das Event stammt. Yahoo springt ein, wo Finnhubs Tarif nicht greift."><span>Quelle</span></th>
+          <th title="Signal-Entscheidung getroffen – auch wenn sie „kein Signal“ lautete"><span>Verarbeitet</span></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for e in events %}
+        <tr>
+          <td class="sym"><a href="/titel/{{ e.symbol }}">{{ e.symbol }}</a></td>
+          <td>{{ e.report_date }}</td>
+          <td class="muted">{{ {'bmo':'vor Handel','amc':'nach Schluss','dmh':'im Handel'}.get(e.report_hour, 'unbekannt') }}</td>
+          <td class="muted">{{ e.period or '–' }}</td>
+          <td class="num">{{ e.eps_estimate|num }}</td>
+          <td class="num">{{ e.eps_actual|num }}</td>
+          <td class="num {{ 'pos' if (e.surprise_pct or 0) > 0 else ('neg' if e.surprise_pct else '') }}">
+            {{ e.surprise_pct|pct(1) }}</td>
+          <td class="num">{{ e.sue|sue }}</td>
+          <td class="muted">{{ {'finnhub':'Finnhub','yahoo':'Yahoo'}.get(e.source, '–') }}</td>
+          <td>{{ 'ja' if e.processed else 'nein' }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <p class="empty">Noch keine Earnings-Events erfasst. Nach dem ersten Lauf stehen hier
+      die Meldungen der letzten {{ settings.lookback_days_earnings }} Tage.</p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,117 @@
+<details class="legend">
+  <summary>Was bedeuten die Werte? (Legende für Einsteiger)</summary>
+  <div class="legend-body">
+
+    <h3>Die Grundidee</h3>
+    <dl>
+      <div>
+        <dt>PEAD</dt>
+        <dd><em>Post-Earnings-Announcement-Drift</em>. Die Beobachtung, dass ein Aktienkurs
+        nach einer überraschend guten oder schlechten Quartalszahl noch wochenlang in
+        dieselbe Richtung weiterläuft, statt sofort auf den neuen Wert zu springen.
+        Diese Umgebung prüft, ob sich das für deine Titel nachvollziehen lässt.</dd>
+      </div>
+      <div>
+        <dt>Earnings / Quartalszahlen</dt>
+        <dd>Ein Unternehmen meldet vierteljährlich seinen Gewinn. Analysten haben vorher
+        geschätzt, wie hoch er ausfällt. Die Abweichung zwischen Schätzung und Realität
+        ist der Auslöser für alles Weitere.</dd>
+      </div>
+    </dl>
+
+    <h3>Kennzahlen eines Signals</h3>
+    <dl>
+      <div>
+        <dt>EPS</dt>
+        <dd><em>Earnings per Share</em>, Gewinn je Aktie. Der Gesamtgewinn geteilt durch die
+        Anzahl der Aktien — macht Unternehmen unterschiedlicher Größe vergleichbar.</dd>
+      </div>
+      <div>
+        <dt>Surprise</dt>
+        <dd>Wie stark der tatsächliche Gewinn von der Analystenschätzung abwich, in Prozent.
+        <strong>+20 %</strong> heißt: der Gewinn lag ein Fünftel über der Erwartung.
+        Negative Werte heißen: schlechter als erwartet.</dd>
+      </div>
+      <div>
+        <dt>SUE</dt>
+        <dd><em>Standardized Unexpected Earnings</em>. Die Surprise, geteilt durch die
+        übliche Schwankung der Überraschungen dieses Unternehmens. Das ist der wichtigere
+        Wert: <strong>+20 % bei einer Firma, die sonst um ±1 % danebenliegt, ist ein
+        Erdbeben — bei einer, die regelmäßig um ±25 % schwankt, ist es Alltag.</strong>
+        SUE macht genau diesen Unterschied sichtbar. Ein SUE über
+        {{ settings.sue_threshold_buy }} löst ein BUY aus, unter
+        {{ settings.sue_threshold_sell }} ein SELL. Liegt für ein Unternehmen noch keine
+        ausreichende Historie vor, steht hier „–" und es zählt stattdessen die reine
+        Surprise.</dd>
+      </div>
+      <div>
+        <dt>BUY / SELL</dt>
+        <dd><strong>Keine Anlageempfehlung</strong>, sondern die Klassifikation der
+        Pipeline. BUY = die Überraschung war positiv genug, dass die PEAD-Logik steigende
+        Kurse erwartet. SELL = das Gegenteil; es wird als Leerverkauf gerechnet, fallende
+        Kurse ergeben dann einen positiven Ertrag.</dd>
+      </div>
+    </dl>
+
+    <h3>Verlauf einer Position</h3>
+    <dl>
+      <div>
+        <dt>Trigger</dt>
+        <dd>Der Tag, an dem das Unternehmen die Zahlen gemeldet hat.</dd>
+      </div>
+      <div>
+        <dt>Einstieg</dt>
+        <dd>Der erste Schlusskurs, der nach der Meldung tatsächlich handelbar war. Wurde
+        nach Börsenschluss gemeldet, ist das der Folgetag — der Schlusskurs des Meldetages
+        lag ja noch vor der Nachricht.</dd>
+      </div>
+      <div>
+        <dt>Restlaufzeit / HT</dt>
+        <dd>Wie viele <strong>Handelstage</strong> die Position noch läuft. Handelstage
+        sind Börsentage, keine Kalendertage — Wochenenden und Feiertage zählen nicht mit.
+        {{ settings.holding_period_days }} Handelstage sind rund
+        {{ (settings.holding_period_days * 1.4) | round | int }} Kalendertage.</dd>
+      </div>
+      <div>
+        <dt>Unrealisiert</dt>
+        <dd>Der Buchgewinn oder -verlust <em>momentan</em>, solange die Position offen ist.
+        Er ändert sich täglich und ist erst beim Ausstieg endgültig.</dd>
+      </div>
+      <div>
+        <dt>Rendite</dt>
+        <dd>Das endgültige Ergebnis nach Ablauf der Haltedauer. <strong>Brutto</strong> —
+        ohne Gebühren, Spread, Slippage und Steuern. In der Realität bliebe weniger übrig.</dd>
+      </div>
+    </dl>
+
+    <h3>Bewertung der Ergebnisse</h3>
+    <dl>
+      <div>
+        <dt>Trefferquote</dt>
+        <dd>Anteil der geschlossenen Positionen mit positivem Ergebnis.</dd>
+      </div>
+      <div>
+        <dt>95 %-Intervall</dt>
+        <dd>Der Bereich, in dem der wahre Wert mit 95 % Sicherheit liegt. <strong>Die
+        Breite dieses Intervalls ist die eigentliche Information.</strong> Bei 3 von 4
+        Treffern reicht es von etwa 30 % bis 95 % — das heißt, aus diesen Daten lässt sich
+        schlicht nichts ableiten. Erst wenn das Intervall schmal wird, sagt die
+        Trefferquote etwas aus.</dd>
+      </div>
+      <div>
+        <dt>Stichprobengröße (n)</dt>
+        <dd>Wie viele Positionen in die Kennzahl eingehen. Diese Umgebung zeigt
+        Trefferquote und mittlere Rendite erst ab <strong>n = {{ summary.min_sample }}</strong>
+        als Zahl an. Darunter steht nur das Intervall — nicht aus Vorsicht, sondern weil
+        ein Punktwert dort eine Genauigkeit vortäuschen würde, die nicht existiert.</dd>
+      </div>
+      <div>
+        <dt>„Von null unterscheidbar"</dt>
+        <dd>Schließt das Intervall der mittleren Rendite die Null aus? Wenn nicht, ist das
+        Ergebnis mit „die Strategie bringt gar nichts" vereinbar — unabhängig davon, wie
+        gut der Mittelwert aussieht.</dd>
+      </div>
+    </dl>
+
+  </div>
+</details>

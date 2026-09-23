@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+{% set active = 'tickers' %}
+{% block title %}Alle Titel · PEAD-Signal-POC{% endblock %}
+{% block head %}{% if reload %}<meta http-equiv="refresh" content="10">{% endif %}{% endblock %}
+
+{% macro csrf_input() %}<input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token() }}">{% endmacro %}
+
+{% block content %}
+{% for f in flash %}
+  <div class="flash {{ f.kind }}" role="status">
+    {{ f.text }}
+    {% if f.undo %}
+      <form method="post" action="/titel/{{ f.undo }}/aufnehmen" class="inline">
+        {{ csrf_input() }}
+        <button type="submit" class="link-btn">Rückgängig</button>
+      </form>
+    {% endif %}
+  </div>
+{% endfor %}
+
+<section class="card">
+  <h2>Beobachtete Titel</h2>
+  <p class="runinfo" style="margin:0 0 16px">
+    Tagesstatus je Titel. „Kein Signal“ ist der Normalfall — die PEAD-Logik äußert
+    sich nur in den {{ settings.holding_period_days }} Handelstagen nach einer
+    Gewinnüberraschung. Ein Klick öffnet den Steckbrief mit Kursverlauf,
+    Kennzahlen und Recherche-Links.
+  </p>
+
+  <form class="add-form" method="get" action="/titel#pruefung">
+    <label for="titel-neu" class="add-label">Titel aufnehmen</label>
+    <div class="add-row">
+      <input id="titel-neu" name="q" value="{{ q }}" required maxlength="300"
+             autocomplete="off" spellcheck="false"
+             placeholder="Kürzel oder Firmenname, z. B. AOMD, NVD, Carl Zeiss Meditec">
+      <button type="submit">Prüfen</button>
+    </div>
+    <p class="runinfo add-hint">
+      Mehrere Einträge mit Komma trennen. Die Prüfung zeigt vor dem Aufnehmen, welches
+      Unternehmen hinter einem Kürzel steht – dieselbe Buchstabenfolge ist an
+      verschiedenen Börsen oft eine andere Firma.
+    </p>
+  </form>
+</section>
+
+{% if lookups is not none %}
+<section class="card" id="pruefung">
+  <h2>Prüfung</h2>
+  <form method="post" action="/titel/aufnehmen">
+    {{ csrf_input() }}
+    {% for lk in lookups %}
+    {% set i = loop.index0 %}
+    <fieldset class="lookup">
+      <legend>Eingabe „{{ lk.query }}“</legend>
+      {% if lk.error %}
+        <p class="flash err">{{ lk.error }}</p>
+      {% elif not lk.companies %}
+        <p class="runinfo">Nichts gefunden. Yahoo-Schreibweise probieren (etwa
+        <code>AIR.DE</code> für Xetra, <code>AIR.F</code> für Frankfurt) oder den
+        Firmennamen eingeben.</p>
+      {% else %}
+        {% if lk.ambiguous %}
+          <p class="callout lookup-warn"><span class="label">Mehrdeutig</span>
+          Passt zu {{ lk.companies|length }} verschiedenen Unternehmen. Bitte am Namen
+          und am Kurs prüfen – deshalb ist nichts vorausgewählt.</p>
+        {% endif %}
+        {% for c in lk.companies %}
+        <div class="company">
+          <p class="company-name">{{ c.name }}</p>
+          <ul class="listings">
+            {% for l in c.listings %}
+            <li>
+              <label class="listing{% if l.known == 'active' %} is-known{% endif %}">
+                <input type="radio" name="wahl-{{ i }}" value="{{ l.symbol }}"
+                       {% if l.symbol == lk.choice %}checked{% endif %}
+                       {% if l.known == 'active' %}disabled{% endif %}>
+                <code class="listing-sym">{{ l.symbol }}</code>
+                <span class="listing-ex">{{ l.exchange }}</span>
+                <span class="listing-px">{% if l.last_close is not none %}{{ l.last_close|num }}
+                  {{ l.currency or '' }}{% else %}<span class="muted">kein Kurs</span>{% endif %}</span>
+                {% if loop.first %}<span class="tag rec" title="{{ c.reason }}">bevorzugter Handelsplatz</span>{% endif %}
+                {% if l.known == 'active' %}<span class="muted">bereits beobachtet</span>
+                {% elif l.known == 'inactive' %}<span class="muted">früher beobachtet, Historie bleibt</span>{% endif %}
+              </label>
+              <input type="hidden" name="n:{{ l.symbol }}" value="{{ c.name }}">
+            </li>
+            {% endfor %}
+          </ul>
+          <p class="runinfo company-reason">{{ c.reason }}</p>
+        </div>
+        {% endfor %}
+        <label class="listing listing-none">
+          <input type="radio" name="wahl-{{ i }}" value="" {% if not lk.choice %}checked{% endif %}>
+          keinen davon aufnehmen
+        </label>
+      {% endif %}
+    </fieldset>
+    {% endfor %}
+
+    {% if lookups|selectattr('companies')|list %}
+    <div class="lookup-actions">
+      <button type="submit">Ausgewählte aufnehmen</button>
+      <a href="/titel">Abbrechen</a>
+    </div>
+    <p class="runinfo">Danach lädt ein Lauf im Hintergrund Kurshistorie, Termine und
+    Stammdaten – ein bis zwei Minuten. Die Liste aktualisiert sich währenddessen selbst.</p>
+    {% endif %}
+  </form>
+</section>
+{% endif %}
+
+<div class="toolbar">
+  <label class="filter">
+    <span class="visually-hidden">Titel filtern</span>
+    <input type="search" placeholder="Filtern nach Symbol, Firma oder Branche …"
+           data-filter="#titel-tabelle" data-filter-status="#titel-anzahl"
+           autocomplete="off">
+  </label>
+  <span class="runinfo" id="titel-anzahl"></span>
+  {% if background %}
+    <span class="runinfo loading-note" role="status">
+      {{ 'Lauf wartet auf den laufenden' if background == 'queued' else 'Lauf im Hintergrund' }} …
+    </span>
+  {% endif %}
+</div>
+
+{% if tickers %}
+<div class="scroll">
+  <table id="titel-tabelle" data-sortable>
+    <thead>
+      <tr>
+        <th><span>Symbol</span></th>
+        <th title="Was die PEAD-Logik heute zu diesem Titel sagt"><span>PEAD-Status</span></th>
+        <th class="num"><span>Letzter Kurs</span></th>
+        <th title="Termin laut Finnhub-Kalender, vorläufig"><span>Nächste Zahlen</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in tickers %}
+      <tr>
+        <td class="sym"><a href="/titel/{{ t.symbol }}">{{ t.symbol }}</a>
+          {% if t.company %}<span class="company">{{ t.company }}</span>{% endif %}
+        </td>
+        <td data-sort="{{ t.signal_type or 'zz' }}">
+          {% if t.signal_type %}
+            <span class="tag {{ 'buy' if t.signal_type == 'BUY' else 'sell' }}">{{ t.signal_type }}</span>
+            {% if t.days_remaining is not none %}<span class="muted"> noch {{ t.days_remaining }} HT</span>{% endif %}
+          {% else %}
+            <span class="muted">kein Signal</span>
+          {% endif %}
+        </td>
+        <td class="num" data-sort="{{ t.last_close or 0 }}">
+          {% if t.last_close is not none %}{{ t.last_close|num }}
+          {% elif background %}<span class="muted">wird geladen …</span>
+          {% else %}<span class="muted" title="Yahoo liefert für dieses Symbol keine Kurse – Schreibweise prüfen">keine Kurse</span>{% endif %}
+        </td>
+        <td data-sort="{{ t.next_earnings_date or '9999-99-99' }}">
+          {% if t.next_earnings_date %}
+            {{ t.next_earnings_date|datefmt }}
+            {% if t.days_to_earnings is not none and t.days_to_earnings >= 0 %}
+              <span class="muted">in {{ t.days_to_earnings }} T</span>
+            {% endif %}
+          {% else %}<span class="muted">–</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  <p class="card empty">Noch kein Titel in Beobachtung. Oben ein Kürzel oder einen
+  Firmennamen eingeben.</p>
+{% endif %}
+
+{% if inactive %}
+<details class="card fold">
+  <summary>Nicht mehr beobachtet ({{ inactive|length }})</summary>
+  <p class="runinfo">Kurshistorie und abgeschlossene Signale bleiben erhalten; offene
+  Positionen laufen bis zum regulären Ausstieg weiter. Neue Signale entstehen nicht.</p>
+  <ul class="inactive-list">
+    {% for t in inactive %}
+    <li>
+      <a href="/titel/{{ t.symbol }}">{{ t.symbol }}</a>
+      {% if t.name %}<span class="muted">{{ t.name }}</span>{% endif %}
+      <form method="post" action="/titel/{{ t.symbol }}/aufnehmen" class="inline">
+        {{ csrf_input() }}
+        <button type="submit" class="secondary">Wieder aufnehmen</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+</details>
+{% endif %}
+
+<details class="card fold">
+  <summary>Liste sichern</summary>
+  <p class="runinfo">Die Titelliste liegt in der Datenbank, nicht in der
+  <code>config.yaml</code>. Dieser Block lässt sich dort einfügen: Er dient als
+  Startliste, wenn die Datenbank leer ist – nach einer Neuinstallation oder
+  <code>make reset</code>.</p>
+  <pre class="export">{{ export_block }}</pre>
+</details>
+{% endblock %}
