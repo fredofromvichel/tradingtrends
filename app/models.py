@@ -14,6 +14,8 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
 )
+from sqlalchemy import func
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -23,6 +25,13 @@ class Base(DeclarativeBase):
 
 def _utcnow() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
+
+
+# Ein Signal, das spaeter als so viele Kalendertage nach der Meldung angelegt
+# wurde, haette man nicht rechtzeitig handeln koennen: es ist rueckwirkend
+# berechnet (make seed, Nachladen fuer neu aufgenommene Titel). Fuenf Tage
+# decken ein Wochenende und einen verpassten Nachtlauf ab.
+RETRO_AFTER_DAYS = 5
 
 
 class Ticker(Base):
@@ -37,6 +46,12 @@ class Ticker(Base):
     # Naechster erwarteter Meldetermin laut Finnhub-Kalender.
     next_earnings_date: Mapped[dt.date | None] = mapped_column(Date, default=None)
     outlook_fetched_at: Mapped[dt.datetime | None] = mapped_column(DateTime, default=None)
+    # Wie weit zurueck Kurse bzw. Earnings fuer diesen Titel schon geholt
+    # wurden (Kalendertage). Ist eine Einstellung groesser als das Gemerkte,
+    # holt der naechste Lauf die Tiefe einmal nach - fuer neue Titel wie fuer
+    # alte nach einer Konfigurationsaenderung.
+    price_history_days: Mapped[int | None] = mapped_column(Integer, default=None)
+    earnings_history_days: Mapped[int | None] = mapped_column(Integer, default=None)
 
 
 class EarningsEvent(Base):
@@ -111,6 +126,25 @@ class Signal(Base):
     # Ohne diesen Massstab sagt eine Rendite fuer sich genommen wenig.
     benchmark_return_pct: Mapped[float | None] = mapped_column(Float, default=None)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+
+    @hybrid_property
+    def retro(self) -> bool:
+        """Rueckwirkend berechnet statt zum Zeitpunkt der Meldung erzeugt.
+
+        Abgeleitet statt gespeichert: der Anlagezeitpunkt steht ohnehin in
+        der Zeile, und so gilt die Regel auch fuer Signale aus der Zeit vor
+        dieser Unterscheidung.
+        """
+        created = self.created_at.date() if self.created_at else dt.date.today()
+        return (created - self.trigger_date).days > RETRO_AFTER_DAYS
+
+    @retro.inplace.expression
+    @classmethod
+    def _retro_expression(cls):
+        return (
+            func.julianday(func.date(cls.created_at)) - func.julianday(cls.trigger_date)
+            > RETRO_AFTER_DAYS
+        )
 
 
 class AnalystRecommendation(Base):

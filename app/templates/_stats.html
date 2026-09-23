@@ -1,6 +1,7 @@
-{# Kennzahlen mit ausgewiesener Unsicherheit. #}
+{# Kennzahlen mit ausgewiesener Unsicherheit. Oben live, unten rueckwirkend. #}
+{% from "_retro.html" import retro_line %}
 <section class="card">
-  <h2>Kennzahlen</h2>
+  <h2>Kennzahlen <span class="muted">· live erzeugte Signale</span></h2>
 
   {% if not summary.reliable %}
     <div class="callout small" style="margin:0 0 14px">
@@ -80,5 +81,14 @@
         Durchschnitt aussieht.
       {% endif %}
     </p>
+  {% endif %}
+  {% if summary_retro and summary_retro.closed_count %}
+  <div class="retro-block">
+    {{ retro_line(summary_retro) }}
+    <p class="runinfo">Rückwirkend heißt: erst später aus heutigen Daten berechnet, etwa
+    mit <code>make seed</code> oder beim Aufnehmen eines Titels. Nachträglich korrigierte
+    Zahlen und eine Titelauswahl, die die Vergangenheit kennt, lassen sie besser aussehen,
+    als sie damals gewesen wären. Nur zur Orientierung – belastbar sind die Zahlen oben.</p>
+  </div>
   {% endif %}
 </section>

@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import market_context
+from app import market_context, retro, watchlist
 from app.config import Settings
 from app.explain import Explanation, explain_momentum
 from app.market_context import MarketContext
@@ -263,3 +263,59 @@ def summary(session: Session) -> dict:
         )
         or 0,
     }
+
+
+# -- Rueckwirkend ------------------------------------------------------------
+
+RETRO_KEY = "retro_momentum"
+
+
+def _months_back(today: dt.date, months: int) -> dt.date:
+    """Monatserster ``months - 1`` Monate vor dem laufenden - zusammen ``months`` Monate."""
+    index = today.year * 12 + (today.month - 1) - (months - 1)
+    return dt.date(index // 12, index % 12 + 1, 1)
+
+
+def retro_history(
+    session: Session, settings: Settings, today: dt.date | None = None
+) -> retro.RetroHistory:
+    """Momentum-Rangfolgen der letzten zwoelf Monate, soweit es noch keine live gab.
+
+    Einmal je Anfrage berechnet (in der Session zwischengespeichert); die
+    Kursreihen teilt es sich mit den uebrigen Ansichten der Seite.
+    """
+    cached = session.info.get(RETRO_KEY)
+    if cached is not None:
+        return cached
+
+    cfg = settings.momentum
+    history = retro.RetroHistory()
+    if cfg.enabled:
+        symbols = watchlist.active_symbols(session)
+        context = market_context.series(session, symbols)
+        series = {
+            s: (context.dates(s), context.close_series(s)) for s in symbols if context.dates(s)
+        }
+        today = today or dt.date.today()
+        # Wo es live umgeschichtet wurde, gilt live - rueckwirkend nur davor,
+        # und zwar monatsweise: sonst liefe im Monat des Live-Starts eine
+        # rueckwirkende Position neben der echten.
+        first_live = session.scalar(select(func.min(MomentumRebalance.rebalance_date)))
+        if first_live is not None:
+            first_live = first_live.replace(day=1)
+        history = retro.momentum_history(
+            series,
+            lookback_days=cfg.lookback_days,
+            skip_days=cfg.skip_days,
+            holding_period_days=cfg.holding_period_days,
+            group_fraction=cfg.group_fraction,
+            min_universe=cfg.min_universe,
+            start=_months_back(today, retro.MONTHS),
+            end=first_live or today + dt.timedelta(days=1),
+        )
+    session.info[RETRO_KEY] = history
+    return history
+
+
+def retro_summary(session: Session, settings: Settings) -> dict:
+    return retro.summarize(retro_history(session, settings).positions)

@@ -227,11 +227,20 @@ def explain_pead(signal, event, settings) -> Explanation:
             else f"{richtung}signal vom {_tag(signal.trigger_date)}, abgeschlossen"
         ),
         steps=steps,
-        caveat=(
-            "Alle Renditen sind brutto – ohne Gebühren, Spread und Steuern. In der "
-            "Realität bliebe weniger übrig."
-        ),
+        caveat=_pead_caveat(signal),
     )
+
+
+def _pead_caveat(signal) -> str:
+    brutto = ("Alle Renditen sind brutto – ohne Gebühren, Spread und Steuern. In der "
+              "Realität bliebe weniger übrig.")
+    if not getattr(signal, "retro", False):
+        return brutto
+    return ("Rückwirkend berechnet: Dieses Signal ist nicht am Tag der Meldung entstanden, "
+            "sondern später aus heutigen Daten. Schätzungen und Gewinne werden nachträglich "
+            "korrigiert, und die Titelauswahl kennt die Vergangenheit – damals hätte die "
+            "Rechnung anders aussehen können. Es zählt deshalb nicht in die Live-Statistik. "
+            + brutto)
 
 
 def _benchmark_step(signal) -> Step:

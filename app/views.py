@@ -42,6 +42,9 @@ class SignalView:
     unrealized_pct: float | None
     # Anteil der Haltedauer, der verstrichen ist (0.0-1.0) - nur zur Anzeige.
     progress: float | None
+    # Rueckwirkend berechnet (siehe models.RETRO_AFTER_DAYS) - zaehlt nicht
+    # in die Live-Statistik.
+    retro: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -107,6 +110,7 @@ def _build(
         benchmark_return_pct=signal.benchmark_return_pct,
         unrealized_pct=unrealized,
         progress=progress,
+        retro=bool(signal.retro),
     )
 
 
@@ -176,24 +180,39 @@ def last_run(session: Session) -> PipelineRun | None:
     return session.scalar(select(PipelineRun).order_by(PipelineRun.started_at.desc()).limit(1))
 
 
-def summary(session: Session) -> dict:
+def summary(session: Session, retro: bool = False) -> dict:
     """Kennzahlen der geschlossenen Positionen, jeweils mit Unsicherheit.
+
+    Getrennt nach Herkunft: ``retro=False`` (Standard) zaehlt nur Signale, die
+    zum Zeitpunkt der Meldung entstanden sind - die belastbare Zahl.
+    ``retro=True`` zaehlt die rueckwirkend berechneten; sie rechnen mit
+    heutigen, nachtraeglich korrigierten Daten und sehen deshalb besser aus,
+    als sie damals gewesen waeren.
 
     Punktschaetzer (Trefferquote, mittlere Rendite) bleiben leer, solange
     weniger als ``MIN_SAMPLE`` Positionen geschlossen sind. Die
     Konfidenzintervalle werden dagegen immer ausgewiesen - ihre Breite ist
     die eigentliche Aussage bei kleiner Stichprobe.
     """
+    herkunft = Signal.retro if retro else ~Signal.retro
     closed = session.scalars(
-        select(Signal).where(Signal.status == CLOSED, Signal.return_pct.isnot(None))
+        select(Signal).where(
+            Signal.status == CLOSED, Signal.return_pct.isnot(None), herkunft
+        )
     ).all()
     returns = [s.return_pct for s in closed if s.return_pct is not None]
     wins = sum(1 for r in returns if r > 0)
+    beats = [
+        s.return_pct - s.benchmark_return_pct
+        for s in closed
+        if s.return_pct is not None and s.benchmark_return_pct is not None
+    ]
 
     rate = estimate_rate(wins, len(returns))
     mean = estimate_mean(returns)
 
     return {
+        "origin": "retro" if retro else "live",
         "closed_count": len(returns),
         "win_count": wins,
         "min_sample": MIN_SAMPLE,
@@ -210,8 +229,11 @@ def summary(session: Session) -> dict:
         "best_return_pct": mean.maximum,
         "worst_return_pct": mean.minimum,
         "effect_distinguishable": mean.excludes_zero,
+        # Wie oft das Signal besser lag als die uebrigen Titel im selben Fenster.
+        "beat_count": sum(1 for b in beats if b > 0),
+        "beat_base": len(beats),
         "open_count": session.scalar(
-            select(func.count()).select_from(Signal).where(Signal.status == OPEN)
+            select(func.count()).select_from(Signal).where(Signal.status == OPEN, herkunft)
         )
         or 0,
         "events_count": session.scalar(select(func.count()).select_from(EarningsEvent)) or 0,

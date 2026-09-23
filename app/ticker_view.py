@@ -9,25 +9,27 @@ Recherche-Links.
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.charting import PriceChart, build_price_chart
+from app.charting import PhaseInput, PriceChart, build_price_chart
 from app.config import Settings
 from app.indicators import PriceContext, PricePoint, compute_context
 from app.models import AnalystRecommendation, EarningsEvent, Price, Signal, Ticker
+from app.reading_guide import Reading, build as build_readings
 from app.research import ResearchLink, build_research_links
 from app.signals import OPEN, trading_days_elapsed
-from app import market_context
+from app import market_context, momentum_view
 from app.views import SignalView, _build
 
 # Wie viele Handelstage das Diagramm zeichnet (rund ein Jahr).
 CHART_BARS = 252
 # Wie viele die Kennzahlen sehen. Muss groesser sein: die 12-Monats-Rendite
-# braucht 252 Abstaende, also 253 Kurse.
-CONTEXT_BARS = 400
+# braucht 253 Kurse, und die 200-Tage-Linie am ersten Diagrammtag die 199
+# Kurse davor - 252 + 199 = 451.
+CONTEXT_BARS = 460
 
 
 @dataclass
@@ -81,6 +83,84 @@ class TickerDetail:
     next_symbol: str | None = None
     position: int = 0
     total: int = 0
+    # Alle Long-/Short-Phasen beider Strategien, neueste zuerst.
+    phases: list[PhaseInput] = field(default_factory=list)
+    # Ab wann die Momentum-Rueckrechnung moeglich war.
+    momentum_retro_from: dt.date | None = None
+    # Lesehilfe: Kennzahlen mit Lesart und Beleglage.
+    readings: list[Reading] = field(default_factory=list)
+
+    def phase_summary(self, retro: bool) -> dict:
+        """Kurzbilanz der abgeschlossenen Phasen einer Herkunft."""
+        closed = [p for p in self.phases if p.retro == retro and p.exit is not None
+                  and p.result is not None]
+        beats = [p for p in closed if p.benchmark is not None]
+        return {
+            "count": len(closed),
+            "wins": sum(1 for p in closed if p.result > 0),
+            "beat_count": sum(1 for p in beats if p.result > p.benchmark),
+            "beat_base": len(beats),
+            "open": sum(1 for p in self.phases if p.retro == retro and p.exit is None),
+        }
+
+
+def _iso(value: str | None) -> dt.date | None:
+    return dt.date.fromisoformat(value) if value else None
+
+
+def _pct_short(value: float | None) -> str:
+    return "" if value is None else f"{value * 100:+.0f} %".replace("-", "−")
+
+
+def _phases(pead_signals, momentum_live, momentum_retro) -> list[PhaseInput]:
+    """Long-/Short-Phasen beider Strategien fuer Spur und Tabelle, neueste zuerst."""
+    out: list[PhaseInput] = []
+    for s in pead_signals:
+        entry = _iso(s.entry_date)
+        if entry is None:
+            continue
+        note = (f"SUE {s.sue:+.2f}".replace(".", ",") if s.sue is not None
+                else f"Überraschung {_pct_short(s.surprise_pct)}")
+        out.append(PhaseInput(
+            lane="pead", side="long" if s.signal_type == "BUY" else "short",
+            label=s.signal_type, retro=s.retro, entry=entry, exit=_iso(s.exit_date),
+            result=s.return_pct if s.return_pct is not None else s.unrealized_pct,
+            benchmark=s.benchmark_return_pct, note=note,
+        ))
+    for m in momentum_live:
+        entry = _iso(m.entry_date)
+        if entry is None:
+            continue
+        out.append(PhaseInput(
+            lane="momentum", side="long" if m.direction == "LONG" else "short",
+            label=m.direction, retro=False, entry=entry, exit=_iso(m.exit_date),
+            result=m.return_pct if m.return_pct is not None else m.unrealized_pct,
+            benchmark=m.benchmark_return_pct, note=f"Rang {m.rank}",
+        ))
+    for r in momentum_retro:
+        out.append(PhaseInput(
+            lane="momentum", side="long" if r.direction == "LONG" else "short",
+            label=r.direction, retro=True, entry=r.entry_date, exit=r.exit_date,
+            result=r.return_pct if r.return_pct is not None else r.unrealized_pct,
+            benchmark=r.benchmark_return_pct,
+            note=f"Rang {r.rank} von {r.universe_size}",
+        ))
+    out.sort(key=lambda p: p.entry, reverse=True)
+    return out
+
+
+def _readings(session: Session, settings: Settings, symbol: str,
+              context: PriceContext) -> list[Reading]:
+    scores = momentum_view.current_scores(session, settings)
+    ranked = [r for r in scores if r["rank"] is not None]
+    mine = next((r for r in ranked if r["symbol"] == symbol), None)
+    return build_readings(
+        context,
+        rank=mine["rank"] if mine else None,
+        universe=len(ranked) or None,
+        score=mine["score"] if mine else None,
+        group_fraction=settings.momentum.group_fraction,
+    )
 
 
 def _price_points(session: Session, symbol: str, limit: int = CONTEXT_BARS) -> list[PricePoint]:
@@ -249,21 +329,31 @@ def ticker_detail(session: Session, settings: Settings, symbol: str) -> TickerDe
     # Ereignismarker: Signale tragen ihre Richtung, Meldungen ohne Signal
     # bleiben neutral - so ist im Chart sichtbar, wo die Logik zugegriffen hat.
     signal_by_event = {s.earnings_event_id: s for s in signals}
-    markers: list[tuple[dt.date, str, str]] = []
+    markers: list[tuple] = []
     for event in event_rows:
         signal = signal_by_event.get(event.id)
         if signal is not None:
+            herkunft = " · rückwirkend" if signal.retro else ""
             markers.append(
                 (
                     signal.trigger_date,
                     signal.signal_type,
-                    f"{signal.signal_type}-Signal · Meldung {event.report_date}",
+                    f"{signal.signal_type}-Signal{herkunft} · Meldung {event.report_date}",
+                    signal.retro,
                 )
             )
         else:
             markers.append(
                 (event.report_date, "NEUTRAL", f"Meldung ohne Signal · {event.report_date}")
             )
+
+    price_context = compute_context(points)
+    retro_history = momentum_view.retro_history(session, settings)
+    phases = _phases(
+        open_signals + closed_signals,
+        momentum_view.for_symbol(session, ticker.symbol),
+        retro_history.for_symbol(ticker.symbol),
+    )
 
     analyst_history = _analyst_views(session, ticker.symbol)
     days_to_earnings = (
@@ -278,8 +368,11 @@ def ticker_detail(session: Session, settings: Settings, symbol: str) -> TickerDe
         industry=ticker.industry,
         exchange=ticker.exchange,
         active=ticker.active,
-        context=compute_context(points),
-        chart=build_price_chart(chart_points, markers),
+        context=price_context,
+        chart=build_price_chart(chart_points, markers, phases, history=points),
+        readings=_readings(session, settings, ticker.symbol, price_context),
+        phases=phases,
+        momentum_retro_from=retro_history.covered_from,
         pead=_pead_status(session, settings, ticker.symbol, open_signals, events),
         open_signals=open_signals,
         closed_signals=closed_signals,

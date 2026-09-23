@@ -1,93 +1,157 @@
-{# Kursverlauf: eine Serie, eine Achse. Ereignismarker tragen ihre Identität
-   über die Form (Dreieck auf/ab, offener Kreis), nicht allein über die Farbe. #}
-<figure class="chart-figure">
+{# Kursverlauf mit Signalphasen. Eine Preisachse; darunter zwei Spuren mit
+   derselben Zeitachse, in denen steht, wann PEAD und Momentum long oder short
+   waren. Identitaet nie allein ueber Farbe: Marker ueber die Form, Spuren
+   ueber ihre Beschriftung, live/rueckwirkend ueber voll/hell. #}
+{% set c = d.chart %}
+<figure class="chart-figure" id="kurschart">
   <figcaption class="chart-caption">
-    Schlusskurse der letzten {{ d.chart.hover|length }} Handelstage
+    Schlusskurse der letzten {{ c.hover|length }} Handelstage
     {%- if d.exchange %} · {{ d.exchange }}{% endif %}
   </figcaption>
 
-  {% if d.chart.empty %}
+  {% if c.empty %}
     <p class="empty">Noch keine Kursdaten für diesen Titel.</p>
   {% else %}
+  <div class="chart-layers" role="group" aria-label="Ebenen im Diagramm ein- und ausblenden">
+    <label><input type="checkbox" data-layer="pead" checked> PEAD-Phasen</label>
+    <label><input type="checkbox" data-layer="momentum" checked> Momentum-Phasen</label>
+    <label><input type="checkbox" data-layer="events" checked> Meldungen</label>
+    <span class="sep" aria-hidden="true"></span>
+    <label><input type="checkbox" data-layer="sma200"> 200-Tage-Linie</label>
+    <label><input type="checkbox" data-layer="sma50"> 50-Tage-Linie</label>
+    <label><input type="checkbox" data-layer="range"> 52-Wochen-Spanne</label>
+  </div>
+
   <div class="chart-wrap">
-    <svg class="price-chart" viewBox="0 0 {{ d.chart.width }} {{ d.chart.height }}"
+    <svg class="price-chart" viewBox="0 0 {{ c.width }} {{ c.height }}"
          role="img" preserveAspectRatio="xMidYMid meet"
-         aria-label="Kursverlauf {{ d.symbol }} mit Markierungen der Quartalsmeldungen">
+         aria-label="Kursverlauf {{ d.symbol }} mit Signalphasen von PEAD und Momentum">
 
       {# Hairline-Gitter, solid und zurückgenommen #}
-      {% for t in d.chart.y_ticks %}
-        <line class="grid" x1="{{ d.chart.plot_left }}" y1="{{ t.position }}"
-              x2="{{ d.chart.plot_right }}" y2="{{ t.position }}"></line>
-        <text class="axis-label" x="{{ d.chart.plot_right + 6 }}" y="{{ t.position + 3.5 }}"
+      {% for t in c.y_ticks %}
+        <line class="grid" x1="{{ c.plot_left }}" y1="{{ t.position }}"
+              x2="{{ c.plot_right }}" y2="{{ t.position }}"></line>
+        <text class="axis-label" x="{{ c.plot_right + 6 }}" y="{{ t.position + 3.5 }}"
               >{{ t.label }}</text>
       {% endfor %}
 
-      <path class="area" d="{{ d.chart.area }}"></path>
-      <polyline class="line" points="{{ d.chart.line }}"></polyline>
+      {# Haltephase unter dem Zeiger, über die Kursfläche gelegt #}
+      <rect class="phase-band long" data-band="pead" x="0" width="0"
+            y="{{ c.plot_top }}" height="{{ c.plot_bottom - c.plot_top }}" hidden></rect>
+      <rect class="phase-band long" data-band="momentum" x="0" width="0"
+            y="{{ c.plot_top }}" height="{{ c.plot_bottom - c.plot_top }}" hidden></rect>
 
-      {% for t in d.chart.x_ticks %}
-        <text class="axis-label" x="{{ t.position }}" y="{{ d.chart.height - 8 }}"
-              text-anchor="{{ t.anchor }}">{{ t.label }}</text>
+      <g data-layer="range" hidden>
+        <line class="range-line" x1="{{ c.plot_left }}" y1="{{ c.high_y }}"
+              x2="{{ c.plot_right }}" y2="{{ c.high_y }}"></line>
+        <text class="range-label" x="{{ c.plot_left + 3 }}" y="{{ c.high_y - 4 }}">52-W-{{ c.high_label }}</text>
+        <line class="range-line" x1="{{ c.plot_left }}" y1="{{ c.low_y }}"
+              x2="{{ c.plot_right }}" y2="{{ c.low_y }}"></line>
+        <text class="range-label" x="{{ c.plot_left + 3 }}" y="{{ c.low_y + 11 }}">52-W-{{ c.low_label }}</text>
+      </g>
+
+      <path class="area" d="{{ c.area }}"></path>
+
+      {% for r in c.ref_lines %}
+      <g data-layer="{{ r.key }}" hidden>
+        <polyline class="ref {{ r.key }}" points="{{ r.points }}"></polyline>
+        <text class="ref-label" x="{{ r.label_x }}" y="{{ r.label_y }}">{{ r.label }}</text>
+      </g>
       {% endfor %}
 
-      {# Ereignismarker. Form = Identität, Farbe = Verstärkung. #}
-      {% for m in d.chart.markers %}
+      <polyline class="line" points="{{ c.line }}"></polyline>
+
+      {# Ereignismarker. Form = Identität, Farbe = Verstärkung, hohl = rückwirkend. #}
+      {% for m in c.markers %}
         {% if m.kind == 'BUY' %}
-          <path class="marker buy" tabindex="0" role="img"
-                aria-label="Kaufsignal am {{ m.date }}"
-                data-date="{{ m.date }}" data-close="{{ m.close }}" data-label="{{ m.label }}"
+          <path class="marker buy{{ ' retro' if m.retro }}" data-layer="pead" tabindex="0" role="img"
+                aria-label="Kaufsignal{{ ' (rückwirkend)' if m.retro }} am {{ m.date }}"
+                data-date="{{ m.date }}" data-label="{{ m.label }}"
                 d="M {{ m.x }},{{ m.y - 6 }} L {{ m.x + 5.2 }},{{ m.y + 3 }} L {{ m.x - 5.2 }},{{ m.y + 3 }} Z"></path>
         {% elif m.kind == 'SELL' %}
-          <path class="marker sell" tabindex="0" role="img"
-                aria-label="Verkaufssignal am {{ m.date }}"
-                data-date="{{ m.date }}" data-close="{{ m.close }}" data-label="{{ m.label }}"
+          <path class="marker sell{{ ' retro' if m.retro }}" data-layer="pead" tabindex="0" role="img"
+                aria-label="Verkaufssignal{{ ' (rückwirkend)' if m.retro }} am {{ m.date }}"
+                data-date="{{ m.date }}" data-label="{{ m.label }}"
                 d="M {{ m.x }},{{ m.y + 6 }} L {{ m.x + 5.2 }},{{ m.y - 3 }} L {{ m.x - 5.2 }},{{ m.y - 3 }} Z"></path>
         {% else %}
-          <circle class="marker neutral" tabindex="0" role="img"
+          <circle class="marker neutral" data-layer="events" tabindex="0" role="img"
                   aria-label="Meldung ohne Signal am {{ m.date }}"
-                  data-date="{{ m.date }}" data-close="{{ m.close }}" data-label="{{ m.label }}"
+                  data-date="{{ m.date }}" data-label="{{ m.label }}"
                   cx="{{ m.x }}" cy="{{ m.y }}" r="4.5"></circle>
         {% endif %}
       {% endfor %}
 
       {# Endpunkt direkt beschriftet – kein Wert an jedem Punkt #}
-      <circle class="end-dot" cx="{{ d.chart.last_x }}" cy="{{ d.chart.last_y }}" r="4"></circle>
-      <text class="end-label" x="{{ d.chart.plot_right + 6 }}" y="{{ d.chart.last_y + 3.5 }}"
-            >{{ d.chart.last_label }}</text>
+      <circle class="end-dot" cx="{{ c.last_x }}" cy="{{ c.last_y }}" r="4"></circle>
+      <text class="end-label" x="{{ c.plot_right + 6 }}" y="{{ c.last_y + 3.5 }}"
+            >{{ c.last_label }}</text>
 
-      <line class="crosshair" x1="0" y1="{{ d.chart.plot_top }}" x2="0"
-            y2="{{ d.chart.plot_bottom }}" hidden></line>
+      {# Spuren: wann welche Strategie long oder short war #}
+      {% for lane in ['pead', 'momentum'] %}
+      <g data-layer="{{ lane }}">
+        <line class="lane-base" x1="{{ c.plot_left }}" x2="{{ c.plot_right }}"
+              y1="{{ c.lane_y[lane] + c.lane_height / 2 }}" y2="{{ c.lane_y[lane] + c.lane_height / 2 }}"></line>
+        <text class="lane-label" x="{{ c.lane_label_x }}" y="{{ c.lane_y[lane] + 9 }}">{{ c.lane_names[lane] }}</text>
+        {% for p in c.phases if p.lane == lane %}
+        <rect class="phase {{ p.side }}{{ ' retro' if p.retro }}" tabindex="0" role="img"
+              data-phase="{{ loop.index0 }}" data-lane="{{ lane }}"
+              data-x0="{{ p.x0 }}" data-x1="{{ p.x1 }}"
+              aria-label="{{ c.lane_names[lane] }} {{ p.label }}{{ ' rückwirkend' if p.retro }} ab {{ p.entry }}{% if p.result is not none %}, {{ p.result|pct(1) }}{% endif %}"
+              x="{{ p.x0 + 1 }}" y="{{ p.y }}" width="{{ [p.x1 - p.x0 - 2, 2]|max }}" height="{{ p.height }}"
+              rx="2"></rect>
+        {% endfor %}
+      </g>
+      {% endfor %}
+
+      {% for t in c.x_ticks %}
+        <text class="axis-label" x="{{ t.position }}" y="{{ c.axis_baseline }}"
+              text-anchor="{{ t.anchor }}">{{ t.label }}</text>
+      {% endfor %}
+
+      <line class="crosshair" x1="0" y1="{{ c.plot_top }}" x2="0"
+            y2="{{ c.lane_y['momentum'] + c.lane_height }}" hidden></line>
       <circle class="crosshair-dot" r="4" hidden></circle>
-      <rect class="hit" x="{{ d.chart.plot_left }}" y="{{ d.chart.plot_top }}"
-            width="{{ d.chart.plot_right - d.chart.plot_left }}"
-            height="{{ d.chart.plot_bottom - d.chart.plot_top }}" fill="transparent"></rect>
+      <rect class="hit" x="{{ c.plot_left }}" y="{{ c.plot_top }}"
+            width="{{ c.plot_right - c.plot_left }}"
+            height="{{ c.lane_y['momentum'] + c.lane_height - c.plot_top }}" fill="transparent"></rect>
     </svg>
 
     <div class="chart-tooltip" hidden>
       <span class="tt-value"></span>
       <span class="tt-date"></span>
       <span class="tt-note"></span>
+      <div class="tt-rows"></div>
     </div>
   </div>
 
   <ul class="chart-legend">
-    <li><span class="key buy"></span>Kaufsignal</li>
-    <li><span class="key sell"></span>Verkaufssignal</li>
-    <li><span class="key neutral"></span>Meldung ohne Signal</li>
+    <li><span class="key line accent"></span>Schlusskurs</li>
+    <li><span class="key box buy"></span>Long / Kauf</li>
+    <li><span class="key box sell"></span>Short / Verkauf</li>
+    <li class="sep" aria-hidden="true"></li>
+    <li><span class="key box solid"></span>live erzeugt</li>
+    <li><span class="key box hollow"></span>rückwirkend berechnet</li>
+    <li><span class="key ring"></span>Meldung ohne Signal</li>
+    <li class="sep" aria-hidden="true"></li>
+    <li><span class="key line sma200"></span>200-Tage-Linie</li>
+    <li><span class="key line sma50"></span>50-Tage-Linie</li>
   </ul>
 
   <details class="chart-table">
-    <summary>Werte als Tabelle</summary>
+    <summary>Kurse als Tabelle</summary>
     <div class="scroll">
       <table>
-        <thead><tr><th>Datum</th><th class="num">Schlusskurs</th><th>Ereignis</th></tr></thead>
+        <thead><tr><th>Datum</th><th class="num">Schlusskurs</th>
+          <th class="num">50 T</th><th class="num">200 T</th><th>Ereignis</th></tr></thead>
         <tbody>
           {% set marker_by_date = {} %}
-          {% for m in d.chart.markers %}{% set _ = marker_by_date.update({m.date: m.label}) %}{% endfor %}
-          {% for h in d.chart.hover|reverse %}
+          {% for m in c.markers %}{% set _ = marker_by_date.update({m.date: m.label}) %}{% endfor %}
+          {% for h in c.hover|reverse %}
             <tr>
               <td>{{ h.date }}</td>
               <td class="num">{{ h.close|num }}</td>
+              <td class="num muted">{{ h.sma50|num }}</td>
+              <td class="num muted">{{ h.sma200|num }}</td>
               <td class="muted">{{ marker_by_date.get(h.date, '–') }}</td>
             </tr>
           {% endfor %}
@@ -98,25 +162,135 @@
   {% endif %}
 </figure>
 
-{% if not d.chart.empty %}
-<script type="application/json" id="chart-points">
-  {{ d.chart.hover_data | tojson }}
-</script>
+{% if not c.empty %}
+<script type="application/json" id="chart-points">{{ c.hover_data | tojson }}</script>
+<script type="application/json" id="chart-phases">{{ c.phase_data | tojson }}</script>
 <script>
 (function () {
-  // Fadenkreuz: der Leser zielt auf ein Datum, nicht auf eine 2px-Linie.
   var data = JSON.parse(document.getElementById('chart-points').textContent);
-  var svg = document.querySelector('.price-chart');
-  var wrap = document.querySelector('.chart-wrap');
-  var tip = document.querySelector('.chart-tooltip');
+  var phases = JSON.parse(document.getElementById('chart-phases').textContent);
+  var fig = document.getElementById('kurschart');
+  var svg = fig.querySelector('.price-chart');
+  var wrap = fig.querySelector('.chart-wrap');
+  var tip = fig.querySelector('.chart-tooltip');
   if (!svg || !data.length) return;
 
+  var LANE = {pead: 'PEAD', momentum: 'Momentum'};
+  // SVG-Elemente kennen die Eigenschaft .hidden nicht - eine Zuweisung setzte
+  // nur eine JS-Variable und liesse das Attribut stehen. Also das Attribut.
+  function setHidden(el, hide) { el.toggleAttribute('hidden', !!hide); }
+  var STORE = 'kurschart-ebenen';
+
+  // -- Ebenen ---------------------------------------------------------------
+  function layerOn(name) {
+    var box = fig.querySelector('input[data-layer="' + name + '"]');
+    return !box || box.checked;
+  }
+  function applyLayers() {
+    fig.querySelectorAll('input[data-layer]').forEach(function (box) {
+      svg.querySelectorAll('[data-layer="' + box.dataset.layer + '"]').forEach(function (el) {
+        setHidden(el, !box.checked);
+      });
+    });
+  }
+  var saved = null;
+  try { saved = JSON.parse(localStorage.getItem(STORE) || 'null'); } catch (e) { saved = null; }
+  fig.querySelectorAll('input[data-layer]').forEach(function (box) {
+    if (saved && Object.prototype.hasOwnProperty.call(saved, box.dataset.layer)) {
+      box.checked = !!saved[box.dataset.layer];
+    }
+    box.addEventListener('change', function () {
+      applyLayers();
+  // Auf schmalen Bildschirmen beim aktuellen Rand beginnen - dort liegt das Heute.
+  if (wrap.scrollWidth > wrap.clientWidth) wrap.scrollLeft = wrap.scrollWidth;
+      var state = {};
+      fig.querySelectorAll('input[data-layer]').forEach(function (b) { state[b.dataset.layer] = b.checked; });
+      try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) { /* privat */ }
+    });
+  });
+  applyLayers();
+
+  // -- Tooltip --------------------------------------------------------------
   var line = svg.querySelector('.crosshair');
   var dot = svg.querySelector('.crosshair-dot');
-  var markers = {};
-  svg.querySelectorAll('.marker').forEach(function (m) {
-    markers[m.dataset.date] = m.dataset.label;
-  });
+  var bands = {pead: svg.querySelector('[data-band="pead"]'),
+               momentum: svg.querySelector('[data-band="momentum"]')};
+  var notes = {};
+  svg.querySelectorAll('.marker').forEach(function (m) { notes[m.dataset.date] = m.dataset.label; });
+
+  function fmt(v, digits) {
+    return v.toLocaleString('de-DE', {minimumFractionDigits: digits, maximumFractionDigits: digits});
+  }
+  function pct(v) { return (v > 0 ? '+' : '') + fmt(v * 100, 1) + ' %'; }
+  function datum(iso) { var p = iso.split('-'); return p[2] + '.' + p[1] + '.' + p[0]; }
+
+  function row(keyClass, strong, rest) {
+    var r = document.createElement('div'); r.className = 'tt-row';
+    var k = document.createElement('span'); k.className = 'tt-key ' + keyClass; r.appendChild(k);
+    var s = document.createElement('span'); s.className = 'tt-strong'; s.textContent = strong; r.appendChild(s);
+    var t = document.createElement('span'); t.textContent = rest; r.appendChild(t);
+    return r;
+  }
+
+  function phaseText(p) {
+    var parts = [p.retro ? 'rückwirkend' : 'live'];
+    if (p.note) parts.push(p.note);
+    parts.push(datum(p.entry) + ' – ' + (p.exit ? datum(p.exit) : 'läuft'));
+    if (p.benchmark !== null) parts.push('Vergleich ' + pct(p.benchmark));
+    return parts.join(' · ');
+  }
+
+  function activeAt(x) {
+    return phases.filter(function (p) {
+      return layerOn(p.lane) && x >= p.x0 - 0.5 && x <= p.x1 + 0.5;
+    });
+  }
+
+  function showBands(list) {
+    ['pead', 'momentum'].forEach(function (lane) {
+      var p = list.filter(function (q) { return q.lane === lane; })[0];
+      var band = bands[lane];
+      if (!p) { setHidden(band, true); return; }
+      band.setAttribute('x', p.x0);
+      band.setAttribute('width', Math.max(1, p.x1 - p.x0));
+      band.setAttribute('class', 'phase-band ' + (p.label === 'BUY' || p.label === 'LONG' ? 'long' : 'short'));
+      setHidden(band, false);
+    });
+  }
+
+  function place(clientX, clientY) {
+    var box = wrap.getBoundingClientRect();
+    var x = clientX - box.left;
+    tip.style.left = Math.max(4, Math.min(box.width - tip.offsetWidth - 4, x - tip.offsetWidth / 2)) + 'px';
+    tip.style.top = Math.max(0, (clientY - box.top) - tip.offsetHeight - 14) + 'px';
+  }
+
+  function show(point, clientX, clientY, onlyPhase) {
+    line.setAttribute('x1', point.x); line.setAttribute('x2', point.x); setHidden(line, false);
+    dot.setAttribute('cx', point.x); dot.setAttribute('cy', point.y); setHidden(dot, false);
+    // textContent statt innerHTML: die Werte kommen aus der Datenbank.
+    tip.querySelector('.tt-value').textContent = fmt(point.close, 2);
+    tip.querySelector('.tt-date').textContent = datum(point.date);
+    tip.querySelector('.tt-note').textContent = notes[point.date] || '';
+    var rows = tip.querySelector('.tt-rows');
+    rows.textContent = '';
+    var list = onlyPhase ? [onlyPhase] : activeAt(point.x);
+    list.forEach(function (p) {
+      var side = (p.label === 'BUY' || p.label === 'LONG') ? 'long' : 'short';
+      var result = p.result === null ? '' : ' ' + pct(p.result) + (p.open ? ' bisher' : '');
+      rows.appendChild(row(side, LANE[p.lane] + ' ' + p.label + result, phaseText(p)));
+    });
+    if (layerOn('sma200') && point.sma200 !== null) rows.appendChild(row('sma200', fmt(point.sma200, 2), '200-Tage-Linie'));
+    if (layerOn('sma50') && point.sma50 !== null) rows.appendChild(row('sma50', fmt(point.sma50, 2), '50-Tage-Linie'));
+    showBands(list);
+    tip.hidden = false;
+    place(clientX, clientY);
+  }
+
+  function hide() {
+    setHidden(line, true); setHidden(dot, true); tip.hidden = true;
+    setHidden(bands.pead, true); setHidden(bands.momentum, true);
+  }
 
   function nearest(svgX) {
     var best = data[0], bestDist = Math.abs(data[0].x - svgX);
@@ -126,46 +300,47 @@
     }
     return best;
   }
-
-  function show(point, clientX, clientY) {
-    line.setAttribute('x1', point.x); line.setAttribute('x2', point.x);
-    line.hidden = false;
-    dot.setAttribute('cx', point.x); dot.setAttribute('cy', point.y);
-    dot.hidden = false;
-    // textContent, nicht innerHTML: die Werte kommen aus einer API.
-    tip.querySelector('.tt-value').textContent =
-      point.close.toLocaleString('de-DE', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-    tip.querySelector('.tt-date').textContent = point.date;
-    tip.querySelector('.tt-note').textContent = markers[point.date] || '';
-    tip.hidden = false;
-    var box = wrap.getBoundingClientRect();
-    var x = clientX - box.left;
-    tip.style.left = Math.max(4, Math.min(box.width - tip.offsetWidth - 4, x - tip.offsetWidth / 2)) + 'px';
-    tip.style.top = Math.max(0, (clientY - box.top) - tip.offsetHeight - 14) + 'px';
-  }
-
-  function hide() { line.hidden = true; dot.hidden = true; tip.hidden = true; }
-
   function toSvgX(clientX) {
     var box = svg.getBoundingClientRect();
     return (clientX - box.left) / box.width * svg.viewBox.baseVal.width;
   }
 
-  svg.addEventListener('pointermove', function (e) {
-    show(nearest(toSvgX(e.clientX)), e.clientX, e.clientY);
-  });
+  // Das Fadenkreuz findet das Datum - man zielt auf einen Tag, nicht auf einen Balken.
+  svg.addEventListener('pointermove', function (e) { show(nearest(toSvgX(e.clientX)), e.clientX, e.clientY); });
   svg.addEventListener('pointerleave', hide);
 
-  // Dieselben Angaben bei Tastaturfokus auf einem Marker.
+  // "im Chart zeigen" aus der Lesehilfe: Ebene einschalten und hinscrollen.
+  // Delegiert, weil die Knoepfe erst nach diesem Skript im Dokument stehen.
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-show-layer]') : null;
+    if (!btn) return;
+    var box = fig.querySelector('input[data-layer="' + btn.dataset.showLayer + '"]');
+    if (!box) return;
+    if (!box.checked) { box.checked = true; box.dispatchEvent(new Event('change')); }
+    fig.scrollIntoView({behavior: 'smooth', block: 'center'});
+  });
+
+  // Tastatur: dieselben Angaben auf Marker und Phasenbalken.
+  function focusAt(svgX, svgY, onlyPhase) {
+    var point = nearest(svgX);
+    var box = svg.getBoundingClientRect();
+    var scale = box.width / svg.viewBox.baseVal.width;
+    show(point, box.left + point.x * scale, box.top + (svgY === null ? point.y : svgY) * scale, onlyPhase);
+  }
   svg.querySelectorAll('.marker').forEach(function (m) {
     m.addEventListener('focus', function () {
       var point = data.filter(function (p) { return p.date === m.dataset.date; })[0];
-      if (!point) return;
-      var box = svg.getBoundingClientRect();
-      var scale = box.width / svg.viewBox.baseVal.width;
-      show(point, box.left + point.x * scale, box.top + point.y * scale);
+      if (point) focusAt(point.x, null);
     });
     m.addEventListener('blur', hide);
+  });
+  svg.querySelectorAll('.phase').forEach(function (el) {
+    el.addEventListener('focus', function () {
+      var x0 = parseFloat(el.dataset.x0), x1 = parseFloat(el.dataset.x1);
+      var p = phases.filter(function (q) { return q.lane === el.dataset.lane && q.x0 === x0 && q.x1 === x1; })[0];
+      focusAt((x0 + x1) / 2, parseFloat(el.getAttribute('y')), p);
+    });
+    el.addEventListener('blur', hide);
   });
 })();
 </script>

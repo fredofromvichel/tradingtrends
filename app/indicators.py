@@ -37,6 +37,9 @@ class PriceContext:
     sma20: float | None
     sma50: float | None
     sma200: float | None
+    # Wie sich die 200-Tage-Linie in den letzten 20 Handelstagen veraendert
+    # hat - ob der langfristige Trend selbst steigt oder faellt.
+    sma200_change_20d: float | None
 
     high_52w: float | None
     low_52w: float | None
@@ -56,6 +59,13 @@ class PriceContext:
     volume_ratio: float | None
 
     bars: int
+
+    @property
+    def distance_to_high(self) -> float | None:
+        """Abstand zum 52-Wochen-Hoch, negativ oder null."""
+        if not self.last_close or not self.high_52w:
+            return None
+        return self.last_close / self.high_52w - 1
 
     def distance_to(self, sma: float | None) -> float | None:
         """Relativer Abstand des letzten Kurses zu einem Durchschnitt."""
@@ -127,11 +137,17 @@ def range_position(current: float, low: float, high: float) -> float | None:
     return max(0.0, min(1.0, (current - low) / (high - low)))
 
 
+def _change(now: float | None, before: float | None) -> float | None:
+    if now is None or before is None or before <= 0:
+        return None
+    return now / before - 1
+
+
 def compute_context(points: list[PricePoint]) -> PriceContext:
     """Verdichtet eine aufsteigend sortierte Kursreihe zu Kennzahlen."""
     if not points:
         return PriceContext(
-            None, None, None, None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None, None, None, None,
             None, None, None, None, None, None, None, 0,
         )
 
@@ -157,6 +173,7 @@ def compute_context(points: list[PricePoint]) -> PriceContext:
         sma20=sma(closes, 20),
         sma50=sma(closes, 50),
         sma200=sma(closes, 200),
+        sma200_change_20d=_change(sma(closes, 200), sma(closes[:-20], 200)),
         high_52w=high,
         low_52w=low,
         range_position=range_position(last.close, low, high),

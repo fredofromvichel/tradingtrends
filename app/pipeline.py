@@ -55,6 +55,10 @@ log = logging.getLogger(__name__)
 # vor dieser Version nur mit einer Woche Historie aufgenommen wurden.
 MIN_ROWS_BEFORE_REFRESH = 60
 
+# So weit schaut der Earnings-Abruf einmalig je Titel zurueck: zwoelf Monate
+# fuer die Signalphasen im Kursdiagramm, plus Haltedauer und Puffer.
+RETRO_EARNINGS_DAYS = 400
+
 # Ab dieser Uhrzeit (deutsche Zeit) gilt der heutige Kurs als Schlusskurs.
 DAY_COMPLETE_AFTER = dt.time(22, 15)
 BERLIN = pytz.timezone("Europe/Berlin")
@@ -487,13 +491,26 @@ def _store_recommendation(reco) -> None:
 
 def _ingest_earnings(settings: Settings, result: RunResult) -> None:
     today = dt.date.today()
-    date_from = today - dt.timedelta(days=settings.lookback_days_earnings)
     # Ein Tag Vorlauf: Meldungen nach US-Boersenschluss tragen in Finnhub
     # teils schon das Datum des Folgetags.
     date_to = today + dt.timedelta(days=1)
 
     with session_scope() as session:
         symbols = _active_symbols(session)
+        depth = dict(
+            session.execute(select(Ticker.symbol, Ticker.earnings_history_days)).all()
+        )
+
+    # Titel, deren Earnings noch nie ein Jahr zurueck geholt wurden, bekommen
+    # einmal das lange Fenster. Die daraus entstehenden Signale sind
+    # rueckwirkend (models.Signal.retro) und zaehlen nicht in die Live-Statistik.
+    retro_symbols = {
+        s for s in symbols
+        if (depth.get(s) or 0) < max(RETRO_EARNINGS_DAYS, settings.lookback_days_earnings)
+    }
+    if retro_symbols:
+        log.info("Earnings-Rueckblick ueber %d Tage fuer: %s", RETRO_EARNINGS_DAYS,
+                 ", ".join(sorted(retro_symbols)))
 
     failures: dict[str, list[str]] = {}
     fallback_used: set[str] = set()
@@ -502,6 +519,11 @@ def _ingest_earnings(settings: Settings, result: RunResult) -> None:
         min_interval_seconds=settings.finnhub_min_interval_seconds,
     ) as client:
         for symbol in symbols:
+            window = settings.lookback_days_earnings
+            if symbol in retro_symbols:
+                window = max(window, RETRO_EARNINGS_DAYS)
+            date_from = today - dt.timedelta(days=window)
+
             with session_scope() as session:
                 gesperrt = coverage.should_skip(
                     session, symbol, EARNINGS_ENDPOINT, settings.finnhub_recheck_days
@@ -577,6 +599,15 @@ def _ingest_earnings(settings: Settings, result: RunResult) -> None:
                     continue
                 if _store_event(settings, raw, history):
                     result.events_ingested += 1
+
+    # Den Rueckblick nur als erledigt merken, wo er ohne Fehler durchlief -
+    # sonst versucht der naechste Lauf es erneut.
+    erledigt = [s for s in retro_symbols if s not in failures]
+    if erledigt:
+        tiefe = max(RETRO_EARNINGS_DAYS, settings.lookback_days_earnings)
+        with session_scope() as session:
+            for row in session.scalars(select(Ticker).where(Ticker.symbol.in_(erledigt))):
+                row.earnings_history_days = tiefe
 
     if fallback_used:
         log.info(
@@ -671,15 +702,21 @@ def _ingest_prices(
                 select(Price.symbol, func.count()).group_by(Price.symbol)
             ).all()
         )
+        depth = dict(session.execute(select(Ticker.symbol, Ticker.price_history_days)).all())
 
     # Das Fenster richtet sich nach dem einzelnen Titel, nicht nach der
     # Datenbank: ein neu aufgenommener Titel braucht die volle Historie,
-    # auch wenn alle anderen laengst welche haben.
-    if force_backfill:
-        backfill, refresh = list(symbols), []
-    else:
-        backfill = [s for s in symbols if counts.get(s, 0) < MIN_ROWS_BEFORE_REFRESH]
-        refresh = [s for s in symbols if counts.get(s, 0) >= MIN_ROWS_BEFORE_REFRESH]
+    # auch wenn alle anderen laengst welche haben. Ebenso ein alter, wenn
+    # price_backfill_days seit seinem letzten Nachladen erhoeht wurde.
+    def needs_backfill(symbol: str) -> bool:
+        return (
+            force_backfill
+            or counts.get(symbol, 0) < MIN_ROWS_BEFORE_REFRESH
+            or (depth.get(symbol) or 0) < settings.price_backfill_days
+        )
+
+    backfill = [s for s in symbols if needs_backfill(s)]
+    refresh = [s for s in symbols if not needs_backfill(s)]
 
     rows = []
     missing: list[str] = []
@@ -733,6 +770,13 @@ def _ingest_prices(
                 existing.volume = row.volume
 
     result.prices_ingested += written
+
+    geholt = [s for s in backfill if s not in missing]
+    if geholt:
+        with session_scope() as session:
+            for row in session.scalars(select(Ticker).where(Ticker.symbol.in_(geholt))):
+                row.price_history_days = settings.price_backfill_days
+
     if missing:
         raise RuntimeError(f"Keine Kursdaten fuer: {', '.join(missing)}")
 

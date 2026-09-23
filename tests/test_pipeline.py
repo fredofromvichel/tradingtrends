@@ -85,7 +85,19 @@ def settings(tmp_path: Path) -> Settings:
 
 @pytest.fixture
 def database(settings: Settings):
+    """Leere DB mit dem Testtitel, dessen einmaliger Earnings-Rueckblick schon lief.
+
+    Die Tests hier pruefen den Tagesbetrieb. Der Rueckblick ueber ein Jahr
+    haette sonst beim ersten Lauf jedes Tests zusaetzliche Quartale geholt;
+    er hat eigene Tests weiter unten.
+    """
+    from app.models import Ticker
+    from app.pipeline import RETRO_EARNINGS_DAYS
+
     init_engine(settings.db_path)
+    with session_scope() as session:
+        session.add(Ticker(symbol=SYMBOL, active=True,
+                           earnings_history_days=RETRO_EARNINGS_DAYS))
     yield
     db_module._engine = None
     db_module._SessionLocal = None
@@ -1123,3 +1135,114 @@ def test_handelsschluss_rechnet_utc_um(monkeypatch):
     # 20:30 UTC = 22:30 Sommerzeit in Berlin
     assert trading_day_complete(dt.datetime(2026, 9, 23, 20, 30, tzinfo=dt.timezone.utc))
     assert not trading_day_complete(dt.datetime(2026, 9, 23, 19, 30, tzinfo=dt.timezone.utc))
+
+
+# -- Einmaliger Rueckblick je Titel ------------------------------------------
+
+
+def _kalender_rekorder(fenster):
+    class Rekorder(FakeFinnhubBase):
+        def earnings_calendar(self, symbol, date_from, date_to):
+            fenster.append((symbol, date_from))
+            return []
+    return Rekorder
+
+
+def test_neuer_titel_bekommt_einmal_ein_jahr_earnings(settings, database, monkeypatch,
+                                                     trading_days):
+    from app import watchlist
+    from app.models import Ticker
+    from app.pipeline import RETRO_EARNINGS_DAYS, run_daily
+
+    fenster: list = []
+    monkeypatch.setattr("app.pipeline.FinnhubClient", _kalender_rekorder(fenster))
+    monkeypatch.setattr("app.pipeline.fetch_prices", _recording_prices(trading_days, []))
+    with session_scope() as session:
+        watchlist.add(session, ["NEU"])
+
+    run_daily(settings, trigger="test")
+    heute = dt.date.today()
+    erster = dict(fenster)
+    assert erster["NEU"] == heute - dt.timedelta(days=RETRO_EARNINGS_DAYS)
+    assert erster[SYMBOL] == heute - dt.timedelta(days=settings.lookback_days_earnings)
+    with session_scope() as session:
+        assert session.get(Ticker, "NEU").earnings_history_days == RETRO_EARNINGS_DAYS
+
+    fenster.clear()
+    run_daily(settings, trigger="test")
+    assert dict(fenster)["NEU"] == heute - dt.timedelta(days=settings.lookback_days_earnings)
+
+
+def test_gescheiterter_rueckblick_wird_wiederholt(settings, database, monkeypatch,
+                                                 trading_days):
+    from app import watchlist
+    from app.models import Ticker
+    from app.pipeline import run_daily
+    from app.sources.finnhub_client import FinnhubTransientError
+
+    class Wackelig(FakeFinnhubBase):
+        def earnings_calendar(self, symbol, *_a):
+            if symbol == "NEU":
+                raise FinnhubTransientError("Timeout")
+            return []
+
+    monkeypatch.setattr("app.pipeline.FinnhubClient", Wackelig)
+    monkeypatch.setattr("app.pipeline.fetch_prices", _recording_prices(trading_days, []))
+    with session_scope() as session:
+        watchlist.add(session, ["NEU"])
+    run_daily(settings, trigger="test")
+    with session_scope() as session:
+        assert session.get(Ticker, "NEU").earnings_history_days is None
+
+
+def test_rueckwirkende_signale_sind_als_solche_erkennbar(settings, database, monkeypatch,
+                                                        trading_days):
+    """Ein Jahr zurueckgeholte Meldungen erzeugen Signale - aber nie Live-Signale."""
+    from app import watchlist
+    from app.pipeline import run_daily
+    from app.views import summary
+
+    alt = trading_days[5]
+
+    class Historisch(FakeFinnhubBase):
+        def earnings_calendar(self, symbol, date_from, date_to):
+            if symbol != "NEU" or not (date_from <= alt <= date_to):
+                return []
+            return [RawEarnings(symbol, alt, 1.00, 1.30, 30.0, "q", "amc")]
+
+    monkeypatch.setattr("app.pipeline.FinnhubClient", Historisch)
+    monkeypatch.setattr("app.pipeline.fetch_prices", _recording_prices(trading_days, []))
+    with session_scope() as session:
+        watchlist.add(session, ["NEU"])
+    result = run_daily(settings, trigger="test")
+    assert result.signals_opened == 1
+
+    with session_scope() as session:
+        signal = session.scalar(select(Signal))
+        assert signal.retro is True
+        assert signal.status == "CLOSED"          # Haltedauer laengst vorbei
+        assert summary(session)["closed_count"] == 0
+        assert summary(session, retro=True)["closed_count"] == 1
+
+
+def test_erhoehte_kurstiefe_wird_einmal_nachgeholt(settings, database, monkeypatch,
+                                                  trading_days):
+    """Wer price_backfill_days erhoeht, braucht kein 'make backfill' mehr."""
+    import dataclasses
+
+    from app.pipeline import run_daily
+
+    calls: list = []
+    monkeypatch.setattr("app.pipeline.FinnhubClient", FakeFinnhubBase)
+    monkeypatch.setattr("app.pipeline.fetch_prices", _recording_prices(trading_days, calls))
+    run_daily(settings, trigger="test")
+    tiefer = dataclasses.replace(settings, price_backfill_days=settings.price_backfill_days + 300)
+
+    calls.clear()
+    run_daily(tiefer, trigger="test")
+    heute = dt.date.today()
+    assert dict(calls)[(SYMBOL,)] == heute - dt.timedelta(days=tiefer.price_backfill_days)
+
+    calls.clear()
+    run_daily(tiefer, trigger="test")
+    assert dict(calls)[(SYMBOL,)] == heute - dt.timedelta(days=tiefer.price_refresh_days)

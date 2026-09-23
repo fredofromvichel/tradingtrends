@@ -2,6 +2,7 @@
 {% set active = 'tickers' %}
 {% block title %}{{ d.symbol }} · PEAD-Signal-POC{% endblock %}
 
+{% from "_retro.html" import retro_line, retro_tag %}
 {% block content %}
 
 <nav class="ticker-nav" aria-label="Titel wechseln">
@@ -98,54 +99,120 @@
 
 {% include "_chart.html" %}
 
-<section class="card">
-  <h2>Kurskontext</h2>
-  <p class="runinfo" style="margin:-4px 0 14px">
-    Beschreibt, wo der Kurs steht und wie stark er schwankt. <strong>Keine Prognose</strong> –
-    die Vorhersagekraft solcher Kennzahlen auf Tagesbasis ist schwach.
+{% if d.phases %}
+{% set live = d.phase_summary(False) %}
+{% set rueck = d.phase_summary(True) %}
+<section class="card" id="signalphasen">
+  <h2>Signale im Rückblick</h2>
+  <div class="phase-sum">
+    <span><strong>Live:</strong>
+      {% if live.count or live.open %}{{ live.count }} abgeschlossen, davon {{ live.wins }} im Plus
+        {%- if live.beat_base %}, {{ live.beat_count }} besser als der Vergleich{% endif %}
+        {%- if live.open %} · {{ live.open }} laufend{% endif %}
+      {% else %}noch keine{% endif %}</span>
+    <span><strong>Rückwirkend:</strong>
+      {% if rueck.count or rueck.open %}{{ rueck.count }} abgeschlossen, davon {{ rueck.wins }} im Plus
+        {%- if rueck.beat_base %}, {{ rueck.beat_count }} besser als der Vergleich{% endif %}
+        {%- if rueck.open %} · {{ rueck.open }} laufend{% endif %}
+      {% else %}keine{% endif %}</span>
+  </div>
+  <p class="runinfo" style="margin:0 0 12px">
+    Jede Zeile ist eine Phase im Diagramm oben. <strong>Rückwirkend</strong> heißt: später
+    aus heutigen Daten berechnet, nicht damals erzeugt. Diese Zeilen sehen besser aus, als
+    sie gewesen wären – Zahlen werden nachträglich korrigiert, und die Titelauswahl kennt
+    die Vergangenheit. Achte deshalb auf die Fehlschläge genauso wie auf die Treffer, und
+    auf die Spalte <em>Vergleich</em>: Eine Phase ist nur dann etwas wert, wenn sie besser
+    lief als die übrigen Titel im selben Zeitraum.
+    {% if d.momentum_retro_from %}Momentum rückwirkend ab
+      {{ d.momentum_retro_from|datefmt }}; davor reicht die Kurshistorie nicht für zwölf
+      Monate Vorlauf.{% endif %}
   </p>
-  <dl class="stats">
-    <div class="stat">
-      <dt title="Abstand zum Durchschnitt der letzten 50 Handelstage">50-Tage-Schnitt</dt>
-      <dd>{{ d.context.sma50|num }}
-        {% if d.context.distance_to(d.context.sma50) is not none %}
-          <small>{{ d.context.distance_to(d.context.sma50)|pct(1) }} Abstand</small>
-        {% endif %}</dd>
-    </div>
-    <div class="stat">
-      <dt title="Abstand zum Durchschnitt der letzten 200 Handelstage – der übliche Langfristmaßstab">200-Tage-Schnitt</dt>
-      <dd>{{ d.context.sma200|num }}
-        {% if d.context.distance_to(d.context.sma200) is not none %}
-          <small>{{ d.context.distance_to(d.context.sma200)|pct(1) }} Abstand</small>
-        {% endif %}</dd>
-    </div>
-    <div class="stat">
-      <dt title="Wo der Kurs zwischen 52-Wochen-Tief und -Hoch steht">52-Wochen-Spanne</dt>
-      <dd>
-        {% if d.context.range_position is not none %}
-          {{ d.context.range_position|rate }}
-          <span class="meter"><span class="meter-fill"
-            style="width: {{ (d.context.range_position * 100)|round(0,'floor')|int }}%"></span></span>
-          <small>{{ d.context.low_52w|num }} bis {{ d.context.high_52w|num }}</small>
-        {% else %}–{% endif %}
-      </dd>
-    </div>
-    <div class="stat">
-      <dt title="Annualisierte Standardabweichung der Tagesrenditen der letzten 60 Handelstage">Volatilität</dt>
-      <dd>{{ d.context.volatility_annualised|rate(0) }}<small>annualisiert, 60 Tage</small></dd>
-    </div>
-    <div class="stat">
-      <dt title="Größter Rückgang vom Hoch innerhalb der letzten 52 Wochen">Max. Rückgang</dt>
-      <dd class="neg">{{ d.context.max_drawdown_52w|pct(1) }}<small>52 Wochen</small></dd>
-    </div>
-    <div class="stat">
-      <dt title="Handelsvolumen des letzten Tages gegen den 20-Tage-Durchschnitt">Volumen</dt>
-      <dd>{% if d.context.volume_ratio %}{{ (d.context.volume_ratio)|round(2) }}×{% else %}–{% endif %}
-        <small>gegen 20-Tage-Schnitt</small></dd>
-    </div>
-  </dl>
+  <div class="scroll">
+    <table data-sortable>
+      <thead><tr>
+        <th><span>Strategie</span></th>
+        <th><span>Richtung</span></th>
+        <th title="Live erzeugt oder rückwirkend berechnet"><span>Herkunft</span></th>
+        <th><span>Einstieg</span></th>
+        <th><span>Ausstieg</span></th>
+        <th class="num" title="Ergebnis der Position, brutto. Bei laufenden Positionen der Stand bisher."><span>Ergebnis</span></th>
+        <th class="num" title="Was die übrigen beobachteten Titel im selben Zeitraum im Mittel machten"><span>Vergleich</span></th>
+        <th title="Warum die Regel das Signal gab"><span>Grund</span></th>
+      </tr></thead>
+      <tbody>
+        {% for p in d.phases %}
+        <tr>
+          <td>{{ 'PEAD' if p.lane == 'pead' else 'Momentum' }}</td>
+          <td><span class="side-key {{ p.side }}{{ ' retro' if p.retro }}"></span>{{ p.label }}</td>
+          <td>{% if p.retro %}{{ retro_tag() }}{% else %}live{% endif %}</td>
+          <td data-sort="{{ p.entry }}">{{ p.entry|datefmt }}</td>
+          <td data-sort="{{ p.exit or '9999' }}">{% if p.exit %}{{ p.exit|datefmt }}{% else %}<span class="muted">läuft</span>{% endif %}</td>
+          <td class="num {{ 'pos' if (p.result or 0) > 0 else ('neg' if p.result else '') }}"
+              data-sort="{{ p.result or 0 }}">{{ p.result|pct(1) }}{% if not p.exit and p.result is not none %} <span class="muted">bisher</span>{% endif %}</td>
+          <td class="num muted" data-sort="{{ p.benchmark or 0 }}">{{ p.benchmark|pct(1) }}</td>
+          <td class="muted">{{ p.note }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
 
-  <dl class="stats" style="margin-top:12px">
+<section class="card" id="lesehilfe">
+  <h2>Den Kurs selbst lesen</h2>
+  <p class="runinfo" style="margin:-4px 0 14px">
+    Sieben Fragen, die du an jeden Kursverlauf stellen kannst – mit dem heutigen Wert,
+    wie er für diesen Titel zu lesen ist, und <strong>wie gut die Forschung stützt</strong>,
+    dass er etwas über die Zukunft sagt. Belastbares steht vorn. Keine dieser Kennzahlen
+    ist für sich eine Kaufempfehlung.
+  </p>
+  <div class="readings">
+    {% for r in d.readings %}
+    <article class="reading">
+      <p class="reading-q">{{ r.question }}</p>
+      <p class="reading-value">{{ r.value }}</p>
+      <p class="reading-text">{{ r.reading }}</p>
+      <div class="evidence" title="{{ r.evidence.sources }}">
+        <span class="evidence-dots" aria-hidden="true">
+          {%- for i in range(4) %}<span class="dot{{ ' on' if i < r.evidence.level }}"></span>{% endfor -%}
+        </span>
+        <span class="evidence-label">Beleglage: {{ r.evidence.label }}</span>
+      </div>
+      <details class="evidence-more">
+        <summary>Warum?</summary>
+        <p>{{ r.evidence.text }}</p>
+        {% if r.evidence.sources %}<p class="muted">Quellen: {{ r.evidence.sources }}</p>{% endif %}
+      </details>
+      {% if r.layer %}
+        <button type="button" class="link-btn show-layer" data-show-layer="{{ r.layer }}">im Chart zeigen</button>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+
+  <details class="howto">
+    <summary>So gehst du einen Titel durch</summary>
+    <ol>
+      <li><strong>Gibt es gerade ein Signal?</strong> Der PEAD-Status oben sagt es. Wenn
+        nicht, hat die Regel zu diesem Titel schlicht nichts zu sagen.</li>
+      <li><strong>Relative Stärke und Trend:</strong> Zeigen der Rang unter deinen Titeln
+        und die 200-Tage-Linie in dieselbe Richtung, ist das Bild eindeutig. Widersprechen
+        sie sich, steckt meist ein Markt- oder Branchenumfeld dahinter.</li>
+      <li><strong>Termin:</strong> Stehen bald Quartalszahlen an, ist bis dahin mit einem
+        Kurssprung in beide Richtungen zu rechnen.</li>
+      <li><strong>Risiko:</strong> Die Schwankung bestimmt, wie groß eine Position sein
+        darf – nicht, in welche Richtung sie laufen wird.</li>
+      <li><strong>Nachrichten:</strong> Die Recherche-Links unten zeigen, ob eine
+        auffällige Bewegung einen Grund hat.</li>
+      <li><strong>Rückblick:</strong> Die Tabelle „Signale im Rückblick“ zeigt, wie oft die
+        Regeln bei diesem Titel danebenlagen. Ein Titel, bei dem sie oft danebenlagen,
+        verdient weniger Vertrauen in das nächste Signal.</li>
+    </ol>
+  </details>
+
+  <p class="reading-q" style="margin:18px 0 8px">Kursveränderung</p>
+  <dl class="stats">
     {% for label, value, hint in [
       ('1 Woche', d.context.return_1w, '5 Handelstage'),
       ('1 Monat', d.context.return_1m, '21 Handelstage'),
@@ -249,7 +316,7 @@
       <tbody>
         {% for s in rows %}
         <tr>
-          <td><span class="tag {{ 'buy' if s.signal_type == 'BUY' else 'sell' }}">{{ s.signal_type }}</span></td>
+          <td><span class="tag {{ 'buy' if s.signal_type == 'BUY' else 'sell' }}">{{ s.signal_type }}</span>{% if s.retro %} {{ retro_tag() }}{% endif %}</td>
           <td>{{ s.trigger_date }}</td>
           <td>{{ s.entry_date or '–' }}</td>
           <td class="num">{{ s.entry_price|num }}</td>

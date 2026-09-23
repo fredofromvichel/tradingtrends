@@ -115,7 +115,7 @@ geöffnetes Formular meldet sich danach als abgelaufen — neu laden genügt.
 | `/` | **Übersicht**: was demnächst ausläuft, nächste Termine, Kennzahlen beider Quellen, offene Positionen |
 | `/history` | Geschlossene Signale mit realisierter Rendite |
 | `/titel` | Tagesstatus aller Titel; Titel prüfen, aufnehmen, wieder aufnehmen, Liste sichern |
-| `/titel/<SYMBOL>` | Steckbrief: PEAD-Status, Kursverlauf, Kennzahlen, Termin, Analysten, Recherche-Links; Beobachtung beenden |
+| `/titel/<SYMBOL>` | Steckbrief: PEAD-Status, Kursverlauf mit Signalphasen beider Strategien, Signale im Rückblick, Lesehilfe mit Beleglage, Termin, Analysten, Recherche-Links; Beobachtung beenden |
 | `/momentum` | Zweite Signalquelle: Rangfolge, aktueller Korb, Kennzahlen |
 | `/events` | Erfasste Earnings-Events (Rohdaten-Kontrolle) |
 | `/docs` | Interaktive OpenAPI-Dokumentation |
@@ -197,7 +197,7 @@ make help       # alle Kurzbefehle
 make check      # Konfiguration, Finnhub und yfinance prüfen  <- erster Schritt bei Problemen
 make run        # Pipeline-Lauf sofort ausführen
 make seed       # letzte Berichtssaison einmalig nachladen (DAYS=150)
-make backfill   # Kurshistorie nachladen (nötig für Momentum)
+make backfill   # Kurshistorie sofort nachladen (sonst beim nächsten Lauf)
 make logs       # Logs verfolgen
 make status     # Bestand zusammenfassen
 make up         # nach Änderung an .env  (ersetzt den Container)
@@ -308,7 +308,7 @@ Start, dass die Datei an dieser Stelle nicht mehr wirkt.
 | `min_history_for_sue` | `4` | Ab wie vielen Vorquartalen SUE berechnet wird |
 | `holding_period_days` | `20` | Haltedauer in **Handelstagen** |
 | `lookback_days_earnings` | `3` | Abruffenster des Earnings-Kalenders |
-| `price_backfill_days` | `180` | Kurshistorie für Titel mit weniger als 60 Kurstagen, etwa neu aufgenommene |
+| `price_backfill_days` | `800` | Kurshistorie je Titel; wird einmal nachgeholt, wenn der Wert steigt |
 | `price_refresh_days` | `7` | Kursfenster bei Folgeläufen |
 | `schedule.cron` | `30 22 * * 1-5` | Werktags 22:30, nach US-Börsenschluss |
 | `schedule.timezone` | `Europe/Berlin` | Zeitzone des Cron-Ausdrucks |
@@ -349,17 +349,53 @@ PEAD-Logik äußert sich nur in den Handelstagen nach einer Gewinnüberraschung.
 An den übrigen rund 340 Tagen im Jahr hat sie zu einem Titel nichts zu sagen,
 und die Seite sagt genau das.
 
-**Kursverlauf.** Ein Jahr Schlusskurse als Liniendiagramm, mit den
-Quartalsmeldungen als Marker: Dreieck nach oben für ein Kaufsignal, nach unten
-für ein Verkaufssignal, offener Kreis für eine Meldung ohne Signal. Die Form
-trägt die Bedeutung, nicht die Farbe — die Marker bleiben für Rotgrünblinde
-unterscheidbar. Fadenkreuz und Tooltip zeigen jeden Tageswert, `Werte als
-Tabelle` klappt dieselben Zahlen ohne Mouseover auf.
+**Kursverlauf mit Signalphasen.** Ein Jahr Schlusskurse, darunter zwei Spuren
+mit derselben Zeitachse: wann **PEAD** und wann **Momentum** long (blau) oder
+short (orange) war — jede Haltephase als Balken vom Einstieg bis zum Ausstieg.
+Voll gefüllt heißt *live erzeugt*, hell mit Kontur heißt *rückwirkend
+berechnet* (siehe [Live und rückwirkend](#live-und-rückwirkend)). Die Spuren
+liegen bewusst unter dem Kurs, nicht auf ihm: zwei Strategien, die sich zeitlich
+überlappen, würden sich dort gegenseitig zudecken.
 
-**Kurskontext.** Gleitende Durchschnitte (50/200 Tage), Position in der
-52-Wochen-Spanne, annualisierte Volatilität, größter Rückgang, Volumen gegen
-den Durchschnitt, Renditen über 1 Woche bis 12 Monate. Das beschreibt, wo der
-Kurs steht — **es prognostiziert nichts** (siehe unten).
+Über dem Diagramm schalten Häkchen die Ebenen: PEAD- und Momentum-Phasen,
+Meldungen, **200-Tage-Linie**, **50-Tage-Linie**, **52-Wochen-Spanne**. Die Wahl
+merkt sich der Browser. Das Fadenkreuz zeigt für jeden Tag den Kurs, die
+Durchschnitte und jede Position, die an diesem Tag lief — mit Ergebnis,
+Vergleich und Grund („SUE +1,81", „Rang 3 von 22") — und hebt deren
+Haltephase auf der Kursfläche hervor. Auf dem Handy lässt sich das Diagramm
+innerhalb der Karte seitlich wischen, statt bis zur Unlesbarkeit zu schrumpfen.
+
+Die Farben sind mit dem Palette-Validator geprüft, alle Paare, beide
+Farbmodi: Die 200-Tage-Linie ist aqua, die 50-Tage-Linie grau. Ocker oder
+Orange schieden aus — für Rot-Schwache nicht vom Short-Orange zu trennen, und
+damit leicht als Signal misszuverstehen.
+
+**Signale im Rückblick.** Unter dem Diagramm jede Phase als Tabellenzeile:
+Strategie, Richtung, Herkunft, Ein- und Ausstieg, Ergebnis, Vergleich, Grund —
+mit einer Bilanz getrennt nach live und rückwirkend. Die Spalte *Vergleich* ist
+die wichtigste: Eine Phase ist nur etwas wert, wenn sie besser lief als die
+übrigen Titel im selben Zeitraum.
+
+**Den Kurs selbst lesen.** Sieben Fragen an jeden Kursverlauf, jeweils mit dem
+heutigen Wert, einem Satz zur Lesart für diesen Titel und der **Beleglage** —
+wie gut die Forschung stützt, dass die Kennzahl etwas über die Zukunft sagt.
+Sortiert nach Beleglage, Belastbares zuerst:
+
+| Frage | Beleglage | Quellen |
+|---|---|---|
+| Lief der Titel besser als deine übrigen? (Momentum-Rang) | gut belegt | Jegadeesh & Titman 1993; Asness, Moskowitz & Pedersen 2013; Daniel & Moskowitz 2016 |
+| Wie weit vom 52-Wochen-Hoch? | belegt | George & Hwang 2004 |
+| Wie viel Risiko? (Schwankung, größter Rückgang) | gut belegt als Risikomaß | Ang, Hodrick, Xing & Zhang 2006; Baker, Bradley & Wurgler 2011 |
+| War der letzte Monat außergewöhnlich? (Kurzfrist-Umkehr) | belegt, bei großen Titeln schwach | Jegadeesh 1990; Lehmann 1990; Avramov, Chordia & Goyal 2006 |
+| Zeigt der langfristige Trend nach oben? (200-Tage-Linie) | gemischt | Brock, Lakonishok & LeBaron 1992; Sullivan, Timmermann & White 1999 |
+| Liegt der kurze Schnitt über dem langen? (50/200-Kreuzung) | schwach | Sullivan, Timmermann & White 1999 |
+| Wird ungewöhnlich viel gehandelt? | beschreibend | – |
+
+Der Lerngehalt steckt in der Reihenfolge: Die bekanntesten Chartsignale — die
+Kreuzung zweier Durchschnitte — sind die am schwächsten belegten. „Im Chart
+zeigen" schaltet die passende Ebene ein. Darunter eine Schrittfolge, wie man
+einen Titel durchgeht, und die Kursveränderung über eine Woche bis zwölf
+Monate. Die Lesarten beschreiben, was ein Wert bedeutet — nicht, was zu tun ist.
 
 **Nächste Quartalszahlen.** Der Termin aus dem Finnhub-Kalender, also wann
 überhaupt wieder mit einem Signal zu rechnen ist.
@@ -483,15 +519,15 @@ das nicht will, nimmt sie aus `config.yaml` heraus.
 ### Voraussetzung: Kurshistorie
 
 Das Formationsfenster braucht **253 Kurstage je Titel** (252 Handelstage
-Rückblick plus einen). Deshalb steht `price_backfill_days` auf 450 — die
-Konfiguration wird beim Start dagegen geprüft und der Container verweigert den
-Start mit konkreter Meldung, wenn der Wert nicht reicht.
+Rückblick plus einen). Die Rückrechnung für das Diagramm braucht mehr: Jede der
+zwölf Monatsrangfolgen braucht selbst zwölf Monate Vorlauf. Deshalb steht
+`price_backfill_days` auf 800. Der Start prüft das Minimum und verweigert sich
+mit konkreter Meldung, wenn es nicht reicht.
 
-Wer aus einer älteren Version kommt, lädt die Historie einmalig nach:
-
-```bash
-make backfill
-```
+Nachladen ist nicht mehr nötig: Je Titel merkt sich die Datenbank, wie tief
+schon geladen wurde (`tickers.price_history_days`). Liegt die Einstellung
+darüber — neuer Titel oder erhöhter Wert —, holt der nächste Lauf die Tiefe
+einmal nach. `make backfill` bleibt für den Fall, dass man es sofort will.
 
 Die `/momentum`-Seite sagt von sich aus, wenn die Historie nicht reicht:
 wie viele Kurstage nötig sind, wie viele Titel bereits versorgt sind und
@@ -548,11 +584,40 @@ die Haltedauer fortgeschritten ist und wo der Kurs gerade steht — und den
 Herkunft zurückführt. Nachvollziehbarkeit ersetzt die Prognose nicht, aber
 sie ist das, was sich aus den Daten ehrlich sagen lässt.
 
+### Live und rückwirkend
+
+Ein Signal ist **live**, wenn es spätestens fünf Tage nach der Meldung
+entstanden ist — rechtzeitig, um danach zu handeln. Alles später Entstandene ist
+**rückwirkend berechnet**: die Signale aus `make seed`, der einmalige
+Jahresrückblick für jeden neu aufgenommenen Titel, und die Momentum-Rangfolgen
+der letzten zwölf Monate vor dem ersten Live-Korb.
+
+Die Unterscheidung wird aus dem Anlagezeitpunkt abgeleitet
+(`models.Signal.retro`), nicht gespeichert — sie gilt damit auch für Signale aus
+der Zeit davor. Momentum rückwirkend wird bei jedem Seitenaufruf aus den
+gespeicherten Kursen neu berechnet (`app/retro.py`): für jeden Monatsanfang nur
+mit den Kursen bis zu diesem Tag, mit dem heutigen Universum, und nie
+gespeichert — so bleibt es aktuell, wenn Titel hinzukommen oder wegfallen.
+
+Rückwirkende Zahlen stehen überall **getrennt** unter den Live-Zahlen und zählen
+nie in die Kacheln. Drei Gründe, warum sie besser aussehen, als sie damals
+gewesen wären:
+
+- **Die Titelauswahl kennt die Vergangenheit.** Wer seine Titel heute wählt,
+  hat die großen Verlierer des letzten Jahres eher weggelassen.
+- **Die Daten sind nachträglich korrigiert.** Konsensschätzungen und
+  gemeldete Gewinne werden revidiert, Kurse um Splits und Dividenden bereinigt.
+- **Nichts davon wurde gehandelt.** Keine Gebühren, kein Spread, kein Zögern.
+
+Die Live-Zahl ist die belastbare, die rückwirkende eine grobe Orientierung —
+und oft eine ernüchternde: Wenn eine Regel schon rückwirkend kaum besser als
+ein Münzwurf abschneidet, wird sie es live erst recht nicht.
+
 ### Warum der Kurskontext keine Prognose ist
 
 Gleitende Durchschnitte, 52-Wochen-Spanne und Volatilität stehen auf der
-Detailseite als **Beschreibung**, nicht als Signal. Der Unterschied ist nicht
-kosmetisch:
+Detailseite als **Lesehilfe mit Beleglage**, nicht als Signal. Keine davon löst
+etwas aus. Der Unterschied ist nicht kosmetisch:
 
 - **Richtung ist kaum vorhersagbar.** Klassische Chartindikatoren (Kreuzungen
   gleitender Durchschnitte, RSI, MACD) sind seit Jahrzehnten untersucht. Was
@@ -587,7 +652,10 @@ nach einer Änderung der Titelliste oder von der CLI ausgelöst:
    verstrichen. Beides ändert sich langsam; täglich abzufragen kostete zwei
    zusätzliche Requests je Ticker ohne Erkenntnisgewinn.
 1. **Earnings abrufen** — Finnhub `/calendar/earnings` für das Rückblickfenster,
-   `/stock/earnings` für die Surprise-Historie je Titel.
+   `/stock/earnings` für die Surprise-Historie je Titel. Für jeden Titel einmal
+   ein Jahr zurück (400 Tage, `tickers.earnings_history_days` merkt es sich);
+   die daraus entstehenden Signale sind rückwirkend. Der SUE einer alten Meldung
+   rechnet dabei nur mit den Quartalen davor — nie mit Wissen aus der Zukunft.
 2. **Events verarbeiten** — `surprise_pct = (actual − estimate) / |estimate|`.
    Liegen ≥ `min_history_for_sue` Vorquartale vor:
    `sue = surprise_pct / stdev(historische surprise_pct)`.
@@ -719,7 +787,7 @@ app/
 make test
 ```
 
-Rund 330 Tests, ohne Netzzugriff — `tests/conftest.py` ersetzt Yahoo durch eine
+Rund 380 Tests, ohne Netzzugriff — `tests/conftest.py` ersetzt Yahoo durch eine
 Attrappe, die sich wie bei einem unbekannten Symbol verhält, damit kein Test
 stillschweigend davon abhängt, was Yahoo gerade antwortet. Die wichtigsten:
 
@@ -731,6 +799,11 @@ stillschweigend davon abhängt, was Yahoo gerade antwortet. Die wichtigsten:
   Handels, Hintergrundlauf nach einer Listenänderung.
 * `tests/test_symbols.py` — Symbolprüfung an nachgebildeten Yahoo-Antworten,
   darunter AOMD (drei Firmen, eine Buchstabenfolge).
+* `tests/test_retro.py` — Momentum-Rückrechnung, vor allem: die Rangfolge eines
+  Monats darf sich nicht ändern, wenn sich Kurse danach ändern.
+* `tests/test_herkunft.py` — welche Signale live und welche rückwirkend zählen,
+  in Python und in SQL gleich.
+* `tests/test_reading_guide.py` — Lesarten je Wert, Reihenfolge nach Beleglage.
 * `tests/test_titel_routes.py` — Titelverwaltung über echtes Routing,
   einschließlich abgewiesener Formulare ohne Token oder von fremder Herkunft.
 
@@ -754,6 +827,8 @@ stillschweigend davon abhängt, was Yahoo gerade antwortet. Die wichtigsten:
 | Recherche-Links treffen das Falsche | Begriffe in `config.yaml` unter `research:` anpassen, `make restart`. Häufigste Ursachen: fehlende Branchenübersetzung (die englische Bezeichnung wird dann roh gesucht) oder ein zu generischer Firmenname. |
 | `make seed` findet trotzdem nichts | Fenster vergrößern (`make seed DAYS=400`); oder `/calendar/earnings` ist im Tarif gesperrt (`make check` zeigt es); oder die Ticker sind keine US-Titel. |
 | Titel zeigt „keine Kurse" | Yahoo kennt die Schreibweise nicht. Auf dem Steckbrief „Nicht mehr beobachten", dann unter `/titel` über „Prüfen" neu aufnehmen — die Prüfung bietet nur Listings mit Kursen an. |
+| Momentum-Spur beginnt erst mitten im Jahr | Vorher reicht die Kurshistorie nicht für zwölf Monate Vorlauf. Mit `price_backfill_days: 800` holt der nächste Lauf sie nach; die Tabelle unter dem Diagramm nennt den ersten möglichen Monat. |
+| Keine rückwirkenden PEAD-Phasen | Der einmalige Jahresrückblick lief noch nicht fehlerfrei durch (Log: „Earnings-Rueckblick"). Er wiederholt sich beim nächsten Lauf. Bei Nicht-US-Titeln liefert Yahoo die Meldungen, ohne Meldezeitpunkt. |
 | Titel steht auf „wird geladen …" | Der Hintergrundlauf ist noch nicht fertig; die Seite lädt sich alle zehn Sekunden neu. Dauert es länger als ein paar Minuten, zeigt `make logs` den Grund. |
 | „Die Änderung wurde nicht ausgeführt – Formular abgelaufen" | Der Container wurde neu gestartet, seit die Seite geladen wurde. Neu laden und noch einmal abschicken. |
 | Änderungen an `tickers` in der `config.yaml` wirken nicht | Gewollt: die Liste wird unter `/titel` gepflegt. Die Datei ist nur die Startliste einer leeren Datenbank; das Log sagt es beim Start. |

@@ -277,6 +277,7 @@ def history(request: Request, session: Session = Depends(get_session)):
             "signals": geschlossene,
             "explanations": views.explanations_for(session, geschlossene, get_settings()),
             "summary": views.summary(session),
+            "summary_retro": views.summary(session, retro=True),
             "last_run": views.last_run(session),
             "settings": get_settings(),
         },
@@ -459,6 +460,8 @@ def momentum_page(request: Request, session: Session = Depends(get_session)):
             "scores": momentum_view.current_scores(session, settings),
             "readiness": momentum_view.readiness(session, settings),
             "summary": momentum_view.summary(session),
+            "summary_retro": momentum_view.retro_summary(session, settings),
+            "retro_covered_from": momentum_view.retro_history(session, settings).covered_from,
             "last_rebalance": momentum_view.last_rebalance(session),
             "last_run": views.last_run(session),
             "settings": settings,
@@ -530,7 +533,10 @@ def api_momentum(
 
 @app.get("/api/summary")
 def api_summary(session: Session = Depends(get_session)):
-    return JSONResponse(views.summary(session))
+    # Oberste Ebene wie bisher: die Live-Zahlen. Rueckwirkende getrennt daneben.
+    data = views.summary(session)
+    data["retro"] = views.summary(session, retro=True)
+    return JSONResponse(data)
 
 
 @app.get("/healthz")

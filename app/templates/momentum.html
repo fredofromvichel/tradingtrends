@@ -2,6 +2,7 @@
 {% set active = 'momentum' %}
 {% block title %}Momentum · PEAD-Signal-POC{% endblock %}
 
+{% from "_retro.html" import retro_line, retro_tag %}
 {% block content %}
 
 <div class="callout">
@@ -38,7 +39,7 @@
 {% endif %}
 
 <section class="card">
-  <h2>Kennzahlen</h2>
+  <h2>Kennzahlen <span class="muted">· live umgeschichtete Körbe</span></h2>
   {% if not summary.reliable %}
     <div class="callout small" style="margin:0 0 14px">
       <span class="label">Noch nicht aussagekräftig</span>
@@ -89,6 +90,18 @@
         „bringt gar nichts“ vereinbar.
       {% endif %}
     </p>
+  {% endif %}
+  {% if summary_retro and summary_retro.closed_count %}
+  <div class="retro-block">
+    {{ retro_line(summary_retro, 'Monatspositionen') }}
+    <p class="runinfo">Rückwirkend: das heutige Universum für jeden Monatsanfang der
+    letzten zwölf Monate so rangiert, wie es der Lauf an diesem Tag getan hätte – nur
+    mit den Kursen bis zu diesem Tag.
+    {% if retro_covered_from %}Möglich ab {{ retro_covered_from|datefmt }}; davor
+    reicht die Kurshistorie nicht für zwölf Monate Vorlauf.{% endif %}
+    Das Universum ist das heutige, ausgewählt mit Kenntnis der Vergangenheit – das
+    schönt das Ergebnis. Nur zur Orientierung.</p>
+  </div>
   {% endif %}
 </section>
 

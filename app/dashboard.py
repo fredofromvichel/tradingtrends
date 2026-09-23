@@ -40,8 +40,10 @@ class Upcoming:
 class Dashboard:
     pead_open: list
     pead_summary: dict
+    pead_summary_retro: dict
     momentum_open: list
     momentum_summary: dict
+    momentum_summary_retro: dict
     upcoming: list[Upcoming]
     ending_soon: list
     ticker_count: int
@@ -50,7 +52,10 @@ class Dashboard:
 
 
 def build(session: Session, settings: Settings) -> Dashboard:
-    pead_open = views.open_signals(session)
+    # Rueckwirkend berechnete Positionen haette niemand rechtzeitig eroeffnen
+    # koennen - auf der Startseite, die zum Handeln da ist, stehen sie nicht.
+    # Der Steckbrief zeigt sie, gekennzeichnet.
+    pead_open = [s for s in views.open_signals(session) if not s.retro]
     momentum_open = momentum_view.open_positions(session)
 
     today = dt.date.today()
@@ -90,8 +95,10 @@ def build(session: Session, settings: Settings) -> Dashboard:
     return Dashboard(
         pead_open=pead_open,
         pead_summary=views.summary(session),
+        pead_summary_retro=views.summary(session, retro=True),
         momentum_open=momentum_open,
         momentum_summary=momentum_view.summary(session),
+        momentum_summary_retro=momentum_view.retro_summary(session, settings),
         upcoming=upcoming,
         ending_soon=ending_soon,
         ticker_count=len(watchlist.active_symbols(session)),

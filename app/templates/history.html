@@ -2,6 +2,7 @@
 {% set active = 'history' %}
 {% block title %}Verlauf · PEAD-Signal-POC{% endblock %}
 
+{% from "_retro.html" import retro_line, retro_tag %}
 {% block content %}
 {% include "_stats.html" %}
 
@@ -45,7 +46,7 @@
             <a href="/titel/{{ s.symbol }}">{{ s.symbol }}</a>
             {% if s.company %}<span class="company">{{ s.company }}</span>{% endif %}
           </td>
-          <td><span class="tag {{ 'buy' if s.signal_type == 'BUY' else 'sell' }}">{{ s.signal_type }}</span></td>
+          <td><span class="tag {{ 'buy' if s.signal_type == 'BUY' else 'sell' }}">{{ s.signal_type }}</span>{% if s.retro %} {{ retro_tag() }}{% endif %}</td>
           <td>{{ s.trigger_date }}</td>
           <td>{{ s.entry_date or '–' }}</td>
           <td class="num">{{ s.entry_price|num }}</td>

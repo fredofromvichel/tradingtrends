@@ -60,11 +60,13 @@ holding_period_days: 20
 # wird (Puffer gegen verpasste Laeufe und Wochenenden).
 lookback_days_earnings: 3
 
-# Kurshistorie beim allerersten Lauf (Kalendertage). Muss die laengste
-# erwartete Haltedauer deutlich ueberdecken - und, wenn Momentum aktiv ist,
-# dessen Formationsfenster von rund zwoelf Monaten. Die Konfiguration wird
-# beim Start dagegen geprueft.
-price_backfill_days: 450
+# Kurshistorie je Titel (Kalendertage). Wird einmal geholt - fuer neue Titel
+# sofort, fuer alle anderen beim naechsten Lauf, wenn der Wert erhoeht wurde.
+# 800 Tage reichen, um die Momentum-Signale der letzten zwoelf Monate
+# rueckwirkend zu berechnen: jede Monatsrangfolge braucht selbst zwoelf
+# Monate Vorlauf. Mit weniger zeigt das Kursdiagramm entsprechend kuerzer
+# zurueck. Mindestens das Formationsfenster (rund 450), das prueft der Start.
+price_backfill_days: 800
 
 # Kursfenster bei jedem weiteren Lauf (Kalendertage).
 price_refresh_days: 7

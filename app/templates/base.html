@@ -77,6 +77,14 @@
     .flash.err{background:var(--sell-soft);color:var(--sell)}
     footer{border-top:1px solid var(--rule);padding:18px 0;font-size:12px;color:var(--ink-faint)}
 
+    /* ---- Live / rueckwirkend ------------------------------------------- */
+    .tag.retro{background:transparent;color:var(--ink-muted);border:1px solid var(--rule);
+      font-weight:600;letter-spacing:0;padding:1px 7px}
+    .retro-line{margin:10px 0 0;font-size:13px;color:var(--ink-muted);
+      font-variant-numeric:tabular-nums;line-height:1.6}
+    .retro-block{margin-top:16px;padding-top:12px;border-top:1px solid var(--rule)}
+    .retro-block .runinfo{margin:6px 0 0}
+
     /* ---- Titelverwaltung ------------------------------------------------ */
     form.inline{display:inline}
     button.secondary{background:transparent;color:var(--accent);padding:5px 12px;font-size:13px}
@@ -170,13 +178,19 @@
        Geprueft mit dem Palette-Validator: CVD-Abstand DeltaE ~23 in beiden
        Modi (Gruen/Rot lag bei 4.2 und war fuer Rotgruenblinde nicht
        unterscheidbar). Zusaetzlich traegt die Form die Identitaet. */
-    :root{ --mark-buy:#2f6fb0; --mark-sell:#c2701c; --mark-neutral:#8a90a0; }
+    :root{ --mark-buy:#2f6fb0; --mark-sell:#c2701c; --mark-neutral:#8a90a0;
+      --line-sma200:#12906f; --line-sma50:#9aa0ad; }
     @media (prefers-color-scheme: dark){
       :root:not([data-theme="light"]){
-        --mark-buy:#4c8cd8; --mark-sell:#c4832f; --mark-neutral:#767c8c; }
+        --mark-buy:#4c8cd8; --mark-sell:#c4832f; --mark-neutral:#767c8c;
+        --line-sma200:#22a07b; --line-sma50:#6f7587; }
     }
     :root[data-theme="dark"]{
-      --mark-buy:#4c8cd8; --mark-sell:#c4832f; --mark-neutral:#767c8c; }
+      --mark-buy:#4c8cd8; --mark-sell:#c4832f; --mark-neutral:#767c8c;
+      --line-sma200:#22a07b; --line-sma50:#6f7587; }
+    /* Bezugslinien: 200-Tage-Linie Aqua, 50-Tage-Linie Grau - geprueft gegen
+       Kurslinie und Signalfarben (alle Paare, beide Modi). Ocker oder Orange
+       schieden aus: fuer Rot-Schwache nicht vom Short-Orange zu trennen. */
 
     .breadcrumb{font-size:13px;color:var(--ink-faint)}
     .breadcrumb a{color:var(--ink-muted);text-decoration:none}
@@ -205,6 +219,12 @@
     .chart-caption{font-size:12.5px;color:var(--ink-faint);margin:0 0 10px}
     .chart-wrap{position:relative}
     .price-chart{width:100%;height:auto;display:block;overflow:visible;touch-action:none}
+    /* Auf dem Handy nicht bis zur Unlesbarkeit schrumpfen: Mindestbreite,
+       seitlich wischbar innerhalb der Karte - die Seite selbst scrollt nicht quer. */
+    @media (max-width: 640px){
+      .chart-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+      .price-chart{min-width:600px;touch-action:pan-x}
+    }
     .price-chart .grid{stroke:var(--rule);stroke-width:1}
     .price-chart .axis-label{font-size:10.5px;fill:var(--ink-faint);
       font-variant-numeric:tabular-nums}
@@ -240,6 +260,93 @@
     .chart-legend .key.buy{background:var(--mark-buy)}
     .chart-legend .key.sell{background:var(--mark-sell)}
     .chart-legend .key.neutral{background:var(--mark-neutral)}
+    /* Ebenen, Spuren, Bezugslinien */
+    .chart-layers{display:flex;flex-wrap:wrap;gap:6px 16px;margin:0 0 10px;font-size:12.5px;
+      color:var(--ink-muted)}
+    .chart-layers label{display:inline-flex;align-items:center;gap:6px;cursor:pointer;
+      user-select:none}
+    .chart-layers input{margin:0;accent-color:var(--accent)}
+    .chart-layers .sep{width:1px;background:var(--rule);align-self:stretch}
+    .price-chart .ref{fill:none;stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round}
+    .price-chart .ref.sma200{stroke:var(--line-sma200)}
+    .price-chart .ref.sma50{stroke:var(--line-sma50)}
+    .price-chart .ref-label{font-size:10px;font-weight:600;fill:var(--ink-muted);
+      paint-order:stroke;stroke:var(--surface);stroke-width:3px}
+    .price-chart .range-line{stroke:var(--ink-faint);stroke-width:1}
+    .price-chart .range-label{font-size:10px;fill:var(--ink-muted);
+      paint-order:stroke;stroke:var(--surface);stroke-width:3px}
+    .price-chart .lane-base{stroke:var(--rule);stroke-width:1}
+    .price-chart .lane-label{font-size:10.5px;fill:var(--ink-muted);font-weight:600}
+    .price-chart .phase{cursor:pointer}
+    .price-chart .phase.long{fill:var(--mark-buy);stroke:var(--mark-buy)}
+    .price-chart .phase.short{fill:var(--mark-sell);stroke:var(--mark-sell)}
+    .price-chart .phase{stroke-width:0}
+    /* Rueckwirkend: heller Koerper mit Kontur - Helligkeit statt Muster,
+       damit es auch ohne Farbsehen unterscheidbar bleibt. */
+    .price-chart .phase.retro{fill-opacity:.28;stroke-width:1.2}
+    .price-chart .phase:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+    .price-chart .marker.retro.buy{fill:var(--surface);stroke:var(--mark-buy);stroke-width:1.6}
+    .price-chart .marker.retro.sell{fill:var(--surface);stroke:var(--mark-sell);stroke-width:1.6}
+    .price-chart .phase-band{opacity:.09;pointer-events:none}
+    .price-chart .phase-band.long{fill:var(--mark-buy)}
+    .price-chart .phase-band.short{fill:var(--mark-sell)}
+    .chart-tooltip .tt-row{display:flex;align-items:center;gap:6px;color:var(--ink-muted);
+      font-size:11.5px;margin-top:2px}
+    .chart-tooltip .tt-key{width:10px;height:3px;border-radius:2px;flex:none}
+    .chart-tooltip .tt-key.long{background:var(--mark-buy)}
+    .chart-tooltip .tt-key.short{background:var(--mark-sell)}
+    .chart-tooltip .tt-key.sma200{background:var(--line-sma200)}
+    .chart-tooltip .tt-key.sma50{background:var(--line-sma50)}
+    .chart-tooltip .tt-strong{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
+    .chart-legend .key.line{height:2px;width:14px}
+    .chart-legend .key.accent{background:var(--accent)}
+    .chart-legend .key.sma200{background:var(--line-sma200)}
+    .chart-legend .key.sma50{background:var(--line-sma50)}
+    .chart-legend .key.box{height:9px;width:14px;border-radius:2px}
+    .chart-legend .key.solid{background:var(--ink-muted)}
+    .chart-legend .key.hollow{background:color-mix(in srgb, var(--ink-muted) 28%, transparent);
+      border:1.2px solid var(--ink-muted)}
+    .chart-legend .key.ring{width:9px;height:9px;border-radius:50%;background:none;
+      border:2px solid var(--mark-neutral)}
+    .chart-legend .sep{width:1px;background:var(--rule)}
+
+    /* Lesehilfe */
+    .readings{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}
+    .reading{background:var(--surface-2);border-radius:10px;padding:12px 14px;
+      display:flex;flex-direction:column;gap:5px}
+    .reading p{margin:0}
+    .reading-q{font-size:11px;letter-spacing:.05em;text-transform:uppercase;
+      color:var(--ink-faint);font-weight:600}
+    .reading-value{font-size:17px;font-weight:600;color:var(--ink)}
+    .reading-text{font-size:13.5px;color:var(--ink-muted);line-height:1.5}
+    .evidence{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-muted);
+      margin-top:4px}
+    .evidence-dots{display:inline-flex;gap:3px}
+    .evidence-dots .dot{width:7px;height:7px;border-radius:50%;border:1.2px solid var(--ink-faint)}
+    .evidence-dots .dot.on{background:var(--ink-muted);border-color:var(--ink-muted)}
+    .evidence-more summary{cursor:pointer;font-size:12px;color:var(--accent)}
+    .evidence-more p{font-size:12.5px;color:var(--ink-muted);margin:6px 0 0;line-height:1.5}
+    .reading .show-layer{align-self:flex-start;font-size:12px;color:var(--accent);
+      font-weight:500;margin-top:2px}
+    .howto{margin-top:14px;border-top:1px solid var(--rule);padding-top:10px}
+    .howto summary{cursor:pointer;font-weight:600;font-size:14px}
+    .howto ol{margin:10px 0 0;padding-left:20px;font-size:13.5px;color:var(--ink-muted);
+      line-height:1.55;display:flex;flex-direction:column;gap:6px}
+    .howto strong{color:var(--ink)}
+
+    /* Phasentabelle */
+    .phase-sum{display:flex;flex-wrap:wrap;gap:8px 22px;margin:0 0 12px;font-size:13.5px;
+      color:var(--ink-muted)}
+    .phase-sum strong{color:var(--ink)}
+    .side-key{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;
+      vertical-align:baseline}
+    .side-key.long{background:var(--mark-buy)}
+    .side-key.short{background:var(--mark-sell)}
+    .side-key.retro.long{background:color-mix(in srgb, var(--mark-buy) 28%, transparent);
+      box-shadow:inset 0 0 0 1.2px var(--mark-buy)}
+    .side-key.retro.short{background:color-mix(in srgb, var(--mark-sell) 28%, transparent);
+      box-shadow:inset 0 0 0 1.2px var(--mark-sell)}
+
     .chart-table{margin-top:10px}
     .chart-table summary{cursor:pointer;font-size:12.5px;color:var(--ink-muted)}
     .chart-table summary:hover{color:var(--accent)}

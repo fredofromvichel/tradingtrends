@@ -2,6 +2,7 @@
 {% set active = 'dashboard' %}
 {% block title %}Übersicht · PEAD-Signal-POC{% endblock %}
 
+{% from "_retro.html" import retro_line, retro_tag %}
 {% block content %}
 
 {% if notice %}
@@ -72,6 +73,7 @@
                 <span class="{% if d.pead_summary.effect_distinguishable %}{{ 'pos' if d.pead_summary.avg_return_pct > 0 else 'neg' }}{% endif %}">{{ d.pead_summary.avg_return_pct|pct }}</span>
               {% else %}<span class="unreliable">n = {{ d.pead_summary.closed_count }}</span>{% endif %}</dd></div>
       </dl>
+      {{ retro_line(d.pead_summary_retro) }}
       <a class="dash-more" href="/history">Verlauf ansehen →</a>
     </div>
     <div class="dual-col">
@@ -88,10 +90,14 @@
                 <span class="{% if d.momentum_summary.effect_distinguishable %}{{ 'pos' if d.momentum_summary.avg_return_pct > 0 else 'neg' }}{% endif %}">{{ d.momentum_summary.avg_return_pct|pct }}</span>
               {% else %}<span class="unreliable">n = {{ d.momentum_summary.closed_count }}</span>{% endif %}</dd></div>
       </dl>
+      {{ retro_line(d.momentum_summary_retro, 'Monatspositionen') }}
       <a class="dash-more" href="/momentum">Rangfolge ansehen →</a>
     </div>
   </div>
   <p class="runinfo" style="margin:14px 0 0">
+    Die Kacheln zählen nur <strong>live</strong> erzeugte Signale. Rückwirkend berechnete
+    stehen darunter getrennt – sie rechnen mit heutigen Daten und sehen deshalb besser
+    aus, als sie damals gewesen wären.
     Beide Quellen laufen getrennt und werden nie verrechnet. Punktwerte erscheinen erst ab
     n = {{ d.pead_summary.min_sample }}; darunter steht das 95 %-Intervall, dessen Breite
     die eigentliche Aussage ist.
